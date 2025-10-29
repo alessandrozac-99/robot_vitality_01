@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "761696350523",
+    "firebase_url": "https://vitality-project-861cd-default-rtdb.firebaseio.com",
+    "project_id": "vitality-project-861cd",
+    "storage_bucket": "vitality-project-861cd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:761696350523:android:ab6eea7718736ce9ff471e",
+        "android_client_info": {
+          "package_name": "com.example.vitality"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGg1Z_iWbEE99obt9EqyYETmFmUFe_zpQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:761696350523:android:54ddddaf1da74dbdff471e",
+        "android_client_info": {
+          "package_name": "com.example.vitalityapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGg1Z_iWbEE99obt9EqyYETmFmUFe_zpQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

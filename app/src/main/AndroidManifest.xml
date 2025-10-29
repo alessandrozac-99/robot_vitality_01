@@ -1,0 +1,70 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.vitality">
+
+    <!-- Rete -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground Service "base" (tutte le versioni) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Foreground Service type=dataSync (obbligatorio da Android 14 / target 34+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Notifiche (obbligatorio da Android 13 / API 33+ per mostrare la notifica del FGS) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+
+    <!-- Se non l'hai già: permesso per ricevere BOOT_COMPLETED -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:label="Vitality"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Vitality">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground Service per sync dati: SOLO dataSync, niente connectedDevice -->
+        <service
+            android:name=".service.VitalityAggregationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".receivers.DailyStartReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.vitality.ACTION_DAILY_START" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receivers.BootCompletedReceiver"
+            android:exported="false">
+        <intent-filter>
+            <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+        </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receivers.StartAggregationReceiver"
+            android:exported="true" />
+
+        <!-- STOP 20:00 -->
+        <receiver
+            android:name=".receivers.StopAggregationReceiver"
+            android:exported="true" />
+
+    </application>
+</manifest>
