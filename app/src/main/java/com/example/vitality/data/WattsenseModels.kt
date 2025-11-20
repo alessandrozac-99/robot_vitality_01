@@ -34,9 +34,4 @@ data class PropertyResponse(
     val history: HistoryValues? = null
 )
 
-// --- Shape semplice per chart merge T/H
-data class HistoricalItem(
-    val timestamp: Long,
-    val temperature: Double,
-    val humidity: Double
-)
+

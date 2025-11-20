@@ -1,28 +1,25 @@
 package com.example.vitality.ui.map
 
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.example.vitality.model.Zone
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.min
 
-/**
- * Canvas della mappa:
- * - Disegna SOLO la mappa e (opzionalmente) l’overlay sPMV.
- * - I poligoni NON sono disegnati (invisibili), ma restano cliccabili (hit-test).
- */
 @Composable
 fun TemiMapCanvas(
     mapBitmap: ImageBitmap,
@@ -30,21 +27,23 @@ fun TemiMapCanvas(
     mapInfo: MapInfo?,
     selectedZone: String?,
     onZoneSelected: (String) -> Unit,
-    // opzionale: overlay tinteggiato generato dal VM (image con alpha)
     tintOverlay: ImageBitmap? = null,
+    heatmapOverlay: ImageBitmap? = null,
+    poi: List<TemiMapViewModel.Poi> = emptyList(),
     modifier: Modifier = Modifier
 ) {
-    // Dimensioni reali del composable (per mappare i click in coordinate bitmap)
-    var canvasSize = IntSize(1, 1)
 
-    // Precalcola i bounding box dei poligoni per accelerare l’hit-test
+    var canvasSize by remember { mutableStateOf(IntSize(1, 1)) }
+
+    // Bounding box precalcolati
     val zoneBounds = remember(zones) {
         zones.associateWith { z ->
-            val minX = z.vertices.minOfOrNull { it.x } ?: 0f
-            val maxX = z.vertices.maxOfOrNull { it.x } ?: 0f
-            val minY = z.vertices.minOfOrNull { it.y } ?: 0f
-            val maxY = z.vertices.maxOfOrNull { it.y } ?: 0f
-            Bounds(minX, minY, maxX, maxY)
+            Bounds(
+                z.vertices.minOf { it.x },
+                z.vertices.minOf { it.y },
+                z.vertices.maxOf { it.x },
+                z.vertices.maxOf { it.y }
+            )
         }
     }
 
@@ -54,32 +53,34 @@ fun TemiMapCanvas(
             .onGloballyPositioned { canvasSize = it.size }
             .pointerInput(zones, mapBitmap) {
                 detectTapGestures { pos ->
-                    // Converto il tap in coordinate bitmap
                     val (sx, sy) = computeScale(canvasSize, mapBitmap.width, mapBitmap.height)
                     val bx = pos.x / sx
                     val by = pos.y / sy
 
-                    // Cerca la prima zona che contiene il punto (prima bounding box, poi poligono)
                     val hit = zones.firstOrNull { z ->
                         val b = zoneBounds[z]!!
-                        if (!b.contains(bx, by)) return@firstOrNull false
-                        pointInPolygon(bx, by, z.vertices)
+                        b.contains(bx, by) &&
+                                pointInPolygon(bx, by, z.vertices)
                     }
+
                     hit?.let { onZoneSelected(it.name) }
                 }
             }
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val canvasIntSize = IntSize(size.width.toInt(), size.height.toInt())
-            val (scaleX, scaleY) = computeScale(canvasIntSize, mapBitmap.width, mapBitmap.height)
 
-            // Dimensioni di destinazione per riempire il canvas mantenendo aspect ratio per asse (qui indipendente)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+
+            val canvasInt = IntSize(size.width.toInt(), size.height.toInt())
+            val (scaleX, scaleY) = computeScale(canvasInt, mapBitmap.width, mapBitmap.height)
+
             val dstSize = IntSize(
-                width = (mapBitmap.width * scaleX).toInt().coerceAtLeast(1),
-                height = (mapBitmap.height * scaleY).toInt().coerceAtLeast(1)
+                (mapBitmap.width * scaleX).toInt(),
+                (mapBitmap.height * scaleY).toInt()
             )
 
-            // Disegno mappa base
+            //----------------------------------------------------------
+            // 1) MAPPA BASE
+            //----------------------------------------------------------
             drawImage(
                 image = mapBitmap,
                 srcOffset = IntOffset.Zero,
@@ -88,42 +89,71 @@ fun TemiMapCanvas(
                 dstSize = dstSize
             )
 
-            // Disegno overlay sPMV se presente (stessa scala della mappa)
-            tintOverlay?.let { overlay ->
+            //----------------------------------------------------------
+            // 2) HEATMAP
+            //----------------------------------------------------------
+            heatmapOverlay?.let {
                 drawImage(
-                    image = overlay,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = IntSize(overlay.width, overlay.height),
-                    dstOffset = IntOffset.Zero,
+                    image = it,
+                    srcSize = IntSize(it.width, it.height),
                     dstSize = dstSize
                 )
             }
 
+            //----------------------------------------------------------
+            // 3) POI — con testo ingrandito se selezionato (senza ombra)
+            //----------------------------------------------------------
+            poi.forEach { p ->
+                val cx = p.x * scaleX
+                val cy = p.y * scaleY
+
+                // Punto rosso
+                drawCircle(
+                    color = Color.Red,
+                    radius = 8f,
+                    center = Offset(cx, cy)
+                )
+
+                // Normalizzazione per il match
+                val isSelectedPoi =
+                    selectedZone != null &&
+                            normalizeName(selectedZone!!) == normalizeName(p.name)
+
+                // Nome POI (normale / ingrandito)
+                drawIntoCanvas { canvas ->
+                    val paint = android.graphics.Paint().apply {
+                        textSize = if (isSelectedPoi) 52f else 32f
+                        color = android.graphics.Color.RED
+                        if (isSelectedPoi) {
+                            setShadowLayer(6f, 0f, 0f, android.graphics.Color.BLACK)
+                        }
+                    }
+
+                    canvas.nativeCanvas.drawText(
+                        p.name,
+                        cx + 6f,
+                        cy,
+                        paint
+                    )
+                }
+            }
         }
     }
 }
 
-/* ================= helpers ================= */
+/* ---------------- HELPERS ---------------- */
 
 private data class Bounds(val minX: Float, val minY: Float, val maxX: Float, val maxY: Float) {
-    fun contains(x: Float, y: Float): Boolean =
-        x >= minX && x <= maxX && y >= minY && y <= maxY
+    fun contains(x: Float, y: Float): Boolean = x in minX..maxX && y in minY..maxY
 }
 
-/**
- * Calcola i fattori di scala per adattare la bitmap alle dimensioni del canvas.
- * Qui uso scaling indipendente per X e Y per riempire tutta l’area.
- */
 private fun computeScale(canvas: IntSize, bmpW: Int, bmpH: Int): Pair<Float, Float> {
-    val sx = canvas.width.toFloat() / max(1, bmpW)
-    val sy = canvas.height.toFloat() / max(1, bmpH)
-    return sx to sy
+    val sx = canvas.width.toFloat() / bmpW
+    val sy = canvas.height.toFloat() / bmpH
+    val scale = min(sx, sy)
+    return scale to scale
 }
 
-/**
- * Ray casting per test punto in poligono.
- * Le coordinate dei vertici sono in pixel bitmap (x,y).
- */
 private fun pointInPolygon(x: Float, y: Float, vertices: List<Zone.Vertex>): Boolean {
     var inside = false
     var j = vertices.lastIndex
@@ -133,13 +163,18 @@ private fun pointInPolygon(x: Float, y: Float, vertices: List<Zone.Vertex>): Boo
         val xj = vertices[j].x
         val yj = vertices[j].y
 
-        val cond = ((yi > y) != (yj > y))
-        val denom = (yj - yi)
-        val safeDen = if (abs(denom) < 1e-6f) 1e-6f else denom
-        val xCross = (xj - xi) * (y - yi) / safeDen + xi
+        val intersect = (yi > y) != (yj > y)
+        val denom = (yj - yi).let { if (abs(it) < 1e-6f) 1e-6f else it }
+        val xCross = (xj - xi) * (y - yi) / denom + xi
 
-        if (cond && x < xCross) inside = !inside
+        if (intersect && x < xCross) inside = !inside
         j = i
     }
     return inside
 }
+
+private fun normalizeName(name: String): String =
+    name.trim().lowercase()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("_", "")

@@ -1,48 +1,65 @@
 package com.example.vitality.ui.theme
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// 🎨 Palette colori chiara e scura
+
 private val LightColorScheme = lightColorScheme(
-    primary = LimeAccent,
-    secondary = TealGlow,
-    background = DeepGray,
-    surface = DarkBlue,
-    onPrimary = Color.Black,
-    onSecondary = Color.White,
-    onBackground = Color.White,
-    onSurface = Color.White
+    primary = BluePrimary,
+    onPrimary = Color.White,
+    primaryContainer = BluePrimaryDark,
+    onPrimaryContainer = Color.White,
+
+    secondary = CyanSecondary,
+    onSecondary = Color.Black,
+
+    background = Color(0xFFF9FAFB),
+    onBackground = Color(0xFF111827),
+
+    surface = Color.White,
+    onSurface = Color(0xFF111827),
+
+    surfaceVariant = Color(0xFFE3E8EF),
+    onSurfaceVariant = Color(0xFF475569),
+
+    outline = Color(0xFF94A3B8),
+
+    error = ErrorRed
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = TealGlow,
-    secondary = LimeAccent,
-    background = DarkBlue,
-    surface = DeepGray,
-    onPrimary = Color.White,
+    primary = BluePrimary,
+    onPrimary = Color.Black,
+    primaryContainer = BluePrimaryDark,
+    onPrimaryContainer = Color.White,
+
+    secondary = CyanSecondary,
     onSecondary = Color.Black,
+
+    background = BackgroundDark,
     onBackground = Color.White,
-    onSurface = Color.White
+
+    surface = SurfaceDark,
+    onSurface = Color.White,
+
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = Color(0xFF94A3B8),
+
+    outline = OutlineDark,
+
+    error = ErrorRed
 )
 
-/**
- * 🔹 Tema principale Vitality
- * Applica palette, font e stili a tutto il progetto.
- */
 @Composable
 fun VitalityAppTheme(
-    darkTheme: Boolean = false,
+    darkTheme: Boolean = true,   // Dark-first experience
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
+        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+        typography = VitalityTypography,
+        shapes = MaterialTheme.shapes,
         content = content
     )
 }

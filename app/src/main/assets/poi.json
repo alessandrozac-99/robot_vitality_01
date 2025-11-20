@@ -1,0 +1,30 @@
+{
+  "poi": [
+    {
+      "name": "home base",
+      "pixelX": 145.74474,
+      "pixelY": 82.79175
+    },
+    {
+      "name": "nicole",
+      "pixelX": 173.22131,
+      "pixelY": 64.68616
+    },
+    {
+      "name": "os",
+      "pixelX": 175.06465,
+      "pixelY": 300.22122
+    },
+    {
+      "name": "gloria",
+      "pixelX": 137.25952,
+      "pixelY": 341.888336
+    },
+    {
+      "name": "serena",
+      "pixelX": 93.0267,
+      "pixelY": 225.84059
+    }
+  ]
+}
+

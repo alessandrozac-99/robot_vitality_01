@@ -74,6 +74,10 @@ class TemperatureViewModel(
     private var pollIndoorJob: Job? = null
     private var pollOutdoorJob: Job? = null
 
+    // anti-stagnazione valori
+    private val lastValues = mutableMapOf<String, Double>()
+    private val lastUpdateTs = mutableMapOf<String, Long>()
+
     private fun norm(s: String) = s.trim().lowercase().replace("_", "").replace(" ", "")
 
     private suspend fun delayUntil(tsTargetMs: Long) {
@@ -105,6 +109,61 @@ class TemperatureViewModel(
         _loading.value = false
     }
 
+    // -------------------------------------------------------------------------
+    //  FIX: getLatestDouble ANTIVALORI, ANTISTAGNANTE
+    // -------------------------------------------------------------------------
+    private suspend fun getLatestDouble(
+        deviceId: String,
+        pid: String?,
+        label: String
+    ): Double? {
+        if (pid.isNullOrBlank()) return null
+
+        val resp = runCatching {
+            wattsense.getProperty(
+                deviceId = deviceId,
+                propertyIdOrSlug = pid,
+                includeHistory = false
+            )
+        }.onFailure {
+            Log.e(TAG, "[$currentRoomKey] $label read failed → ${it.message}")
+        }.getOrNull() ?: return null
+
+        val raw = resp.scaledPayload ?: (resp.payload as? Number)?.toDouble()
+
+        // 1) anti-null / anti-broken
+        if (raw == null || raw.isNaN() || raw.isInfinite()) return null
+
+        // 2) anti-range (valori plausibili indoor)
+        val value = when (label) {
+            "T" -> raw.takeIf { it in -10.0..50.0 }
+            "RH" -> raw.takeIf { it in 0.0..100.0 }
+            "CO2" -> raw.takeIf { it in 300.0..5000.0 }
+            "VOC" -> raw.takeIf { it >= 0.0 }
+            else -> raw
+        } ?: return null
+
+        val now = System.currentTimeMillis()
+        val last = lastValues[label]
+
+        // 3) anti-stagnazione: se Wattsense non aggiorna da oltre 2 min → discard
+        if (last != null && last == value) {
+            val age = now - (lastUpdateTs[label] ?: 0L)
+            if (age > 120_000) { // 2 minuti
+                Log.w(TAG, "[$currentRoomKey] $label stale for ${age}ms → discard")
+                return null
+            }
+        } else {
+            lastValues[label] = value
+            lastUpdateTs[label] = now
+        }
+
+        return value
+    }
+
+    // -------------------------------------------------------------------------
+    // CARICAMENTO DATI PER ZONA
+    // -------------------------------------------------------------------------
     fun loadDataForZone(roomName: String) {
         val key = roomSensorIds.keys.firstOrNull { norm(it) == norm(roomName) }
         if (key == null) {
@@ -113,49 +172,28 @@ class TemperatureViewModel(
         }
         currentRoomKey = key
 
-        // reset sPMV/CLO per evitare valori residui
-        _spmv.value = SpmvUi()
+        _spmv.value = SpmvUi()  // reset sPMV
 
-        // stop polling precedenti
         pollIndoorJob?.cancel()
         pollOutdoorJob?.cancel()
 
         viewModelScope.launch(Dispatchers.IO) {
             _loading.emit(true)
             _error.emit(null)
+
             try {
                 val ids = roomSensorIds[key]!!
                 val deviceId = ids.deviceId
 
-                suspend fun getLatestDouble(pid: String?, label: String): Double? {
-                    if (pid.isNullOrBlank()) {
-                        Log.w(TAG, "[$currentRoomKey] $label: propertyId NULL/blank")
-                        return null
-                    }
-                    val resp = runCatching {
-                        wattsense.getProperty(
-                            deviceId = deviceId,
-                            propertyIdOrSlug = pid,
-                            includeHistory = false
-                        )
-                    }.onFailure {
-                        Log.e(TAG, "[$currentRoomKey] getProperty($label) dev=$deviceId pid=$pid ❌ ${it.message}")
-                    }.getOrNull()
-
-                    val value = resp?.scaledPayload ?: (resp?.payload as? Number)?.toDouble()
-                    Log.i(TAG, "[$currentRoomKey] READ $label dev=$deviceId pid=$pid → $value")
-                    return value
-                }
-
-                // --- Primo snapshot immediato (UI snappy) ---
-                val t  = getLatestDouble(ids.temperatureId, "T")
-                val rh = getLatestDouble(ids.humidityId,   "RH")
-                val c  = getLatestDouble(ids.co2Id,        "CO2")
-                val vv = getLatestDouble(ids.vocId,        "VOC")
-                val iq = getLatestDouble(ids.iaqindexId,   "IAQ")
-                val lx = getLatestDouble(ids.illuminationId,"LUX")
-                val db = getLatestDouble(ids.soundlevelId, "DB")
-                val aq = getLatestDouble(ids.airqualityscoreId, "AQS")
+                // FIRST SNAPSHOT (snappy UI)
+                val t  = getLatestDouble(deviceId, ids.temperatureId, "T")
+                val rh = getLatestDouble(deviceId, ids.humidityId,   "RH")
+                val c  = getLatestDouble(deviceId, ids.co2Id,        "CO2")
+                val vv = getLatestDouble(deviceId, ids.vocId,        "VOC")
+                val iq = getLatestDouble(deviceId, ids.iaqindexId,   "IAQ")
+                val lx = getLatestDouble(deviceId, ids.illuminationId,"LUX")
+                val db = getLatestDouble(deviceId, ids.soundlevelId, "DB")
+                val aq = getLatestDouble(deviceId, ids.airqualityscoreId, "AQS")
 
                 withContext(Dispatchers.Main) {
                     _temperature.value = t
@@ -168,61 +206,65 @@ class TemperatureViewModel(
                     _airQualityScore.value = aq
                 }
 
-                // T esterna immediata + prima recompute sPMV
                 refreshOutdoorOnce()
                 recomputeSpmv()
 
-                // --- Poll indoor ALLINEATO al minuto ---
+                // ---------------------------------------------------------------------
+                // POLL INDOOR OGNI MINUTO — FIX STABILITÀ
+                // ---------------------------------------------------------------------
                 pollIndoorJob = launch(Dispatchers.IO) {
                     var nextTick = nextMinuteBoundaryMs()
+
                     while (isActive) {
                         delayUntil(nextTick)
-                        val wakeLag = System.currentTimeMillis() - nextTick
-                        if (kotlin.math.abs(wakeLag) > 1_000) {
-                            Log.w(TAG, "⏱️ drift indoor wakeLag=${wakeLag}ms → riallineo")
-                        }
+
                         try {
-                            val tNow  = getLatestDouble(ids.temperatureId, "T")
-                            val rhNow = getLatestDouble(ids.humidityId,   "RH")
-                            val cNow  = getLatestDouble(ids.co2Id,        "CO2")
-                            val vvNow = getLatestDouble(ids.vocId,        "VOC")
-                            val iqNow = getLatestDouble(ids.iaqindexId,   "IAQ")
-                            val lxNow = getLatestDouble(ids.illuminationId,"LUX")
-                            val dbNow = getLatestDouble(ids.soundlevelId, "DB")
-                            val aqNow = getLatestDouble(ids.airqualityscoreId, "AQS")
+                            val tNow  = getLatestDouble(deviceId, ids.temperatureId, "T")
+                            val rhNow = getLatestDouble(deviceId, ids.humidityId,   "RH")
+                            val cNow  = getLatestDouble(deviceId, ids.co2Id,        "CO2")
+                            val vvNow = getLatestDouble(deviceId, ids.vocId,        "VOC")
+                            val iqNow = getLatestDouble(deviceId, ids.iaqindexId,   "IAQ")
+                            val lxNow = getLatestDouble(deviceId, ids.illuminationId,"LUX")
+                            val dbNow = getLatestDouble(deviceId, ids.soundlevelId, "DB")
+                            val aqNow = getLatestDouble(deviceId, ids.airqualityscoreId, "AQS")
 
                             withContext(Dispatchers.Main) {
-                                if (tNow  != null) _temperature.value = tNow
-                                if (rhNow != null) _humidity.value   = rhNow
-                                if (cNow  != null) _co2.value        = cNow
-                                if (vvNow != null) _voc.value        = vvNow
-                                if (iqNow != null) _iaq.value        = iqNow
-                                if (lxNow != null) _illumination.value = lxNow
-                                if (dbNow != null) _sound.value      = dbNow
-                                if (aqNow != null) _airQualityScore.value = aqNow
+                                if (tNow  != null && tNow  != _temperature.value) _temperature.value = tNow
+                                if (rhNow != null && rhNow != _humidity.value)   _humidity.value   = rhNow
+                                if (cNow  != null && cNow  != _co2.value)        _co2.value        = cNow
+                                if (vvNow != null && vvNow != _voc.value)        _voc.value        = vvNow
+                                if (iqNow != null && iqNow != _iaq.value)        _iaq.value        = iqNow
+                                if (lxNow != null && lxNow != _illumination.value) _illumination.value = lxNow
+                                if (dbNow != null && dbNow != _sound.value)      _sound.value      = dbNow
+                                if (aqNow != null && aqNow != _airQualityScore.value) _airQualityScore.value = aqNow
                             }
+
+                            // watchdog 3 minuti
+                            val ageT = System.currentTimeMillis() - (lastUpdateTs["T"] ?: 0L)
+                            if (ageT > 180_000) {
+                                withContext(Dispatchers.Main) { _temperature.value = null }
+                            }
+
                             recomputeSpmv()
+
                         } catch (e: Exception) {
-                            Log.e(TAG, "[$currentRoomKey] pollIndoor: ${e.message}")
+                            Log.e(TAG, "[$currentRoomKey] pollIndoor error → ${e.message}")
                         } finally {
                             nextTick = nextMinuteBoundaryMs(nextTick)
                         }
                     }
                 }
 
-                // --- Poll esterno ALLINEATO al minuto ---
+                // ---------------------------------------------------------------------
+                // POLL OUTDOOR
+                // ---------------------------------------------------------------------
                 pollOutdoorJob = launch(Dispatchers.IO) {
                     var nextTick = nextMinuteBoundaryMs()
                     while (isActive) {
                         delayUntil(nextTick)
-                        val wakeLag = System.currentTimeMillis() - nextTick
-                        if (kotlin.math.abs(wakeLag) > 1_000) {
-                            Log.w(TAG, "⏱️ drift outdoor wakeLag=${wakeLag}ms → riallineo")
-                        }
                         try {
                             refreshOutdoorOnce()
                             recomputeSpmv()
-                        } catch (_: Exception) {
                         } finally {
                             nextTick = nextMinuteBoundaryMs(nextTick)
                         }
@@ -230,33 +272,38 @@ class TemperatureViewModel(
                 }
 
                 _loading.emit(false)
+
             } catch (e: Exception) {
-                Log.e(TAG, "[$currentRoomKey] loadDataForZone: ${e.message}", e)
+                Log.e(TAG, "[$currentRoomKey] loadDataForZone:", e)
                 _error.emit(e.localizedMessage ?: "Errore caricamento")
                 _loading.emit(false)
             }
         }
     }
 
+    // -------------------------------------------------------------------------
+    // OUTDOOR TEMP
+    // -------------------------------------------------------------------------
     private suspend fun refreshOutdoorOnce() {
-        val out = weatherRepo.fetchAnconaOutdoorTempC()
+        val out = runCatching { weatherRepo.fetchAnconaOutdoorTempC() }.getOrNull()
         withContext(Dispatchers.Main) { _externalTemp.value = out }
     }
 
+    // -------------------------------------------------------------------------
+    // COMPUTE SPMV (robusto)
+    // -------------------------------------------------------------------------
     fun recomputeSpmv() {
         val t = _temperature.value
         val rh = _humidity.value
         val tOut = _externalTemp.value
-        if (t == null || rh == null || tOut == null) return
+
+        if (t == null || rh == null || tOut == null) {
+            _spmv.value = SpmvUi()
+            return
+        }
 
         val r = Spmv.compute(t, rh, tOut)
         val clo = (round(r.cloPred * 10_000.0) / 10_000.0)
-
-        Log.i(
-            TAG,
-            "[$currentRoomKey] CLO=${"%.4f".format(clo)}  " +
-                    "T=${"%.2f".format(t)}°C RH=${"%.1f".format(rh)}% T_out=${"%.2f".format(tOut)}°C"
-        )
 
         _spmv.update {
             SpmvUi(
@@ -269,8 +316,8 @@ class TemperatureViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         pollIndoorJob?.cancel()
         pollOutdoorJob?.cancel()
+        super.onCleared()
     }
 }

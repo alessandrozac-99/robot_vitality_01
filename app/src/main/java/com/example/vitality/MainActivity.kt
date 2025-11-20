@@ -1,132 +1,169 @@
 package com.example.vitality
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.net.Uri
+import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.core.content.ContextCompat
-import androidx.core.content.ContextCompat.startForegroundService
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.startForegroundService
 import com.example.vitality.service.VitalityAggregationService
 import com.example.vitality.ui.dashboard.DashboardScreen
 import com.example.vitality.ui.map.TemiMapViewModel
 import com.example.vitality.ui.theme.VitalityAppTheme
-import com.example.vitality.viewmodel.HistoryViewModel
+import com.example.vitality.viewmodel.ComfortDayViewModel
 import com.example.vitality.viewmodel.SmartPlugViewModel
 import com.example.vitality.viewmodel.TemperatureViewModel
 import com.example.vitality.util.AlarmScheduler
-import java.util.Calendar
-import java.util.TimeZone
-import android.app.AlarmManager
+import java.util.*
 
 class MainActivity : ComponentActivity() {
 
     private val mapVM: TemiMapViewModel by viewModels()
-    private val historyVM: HistoryViewModel by viewModels()
     private val tempVM: TemperatureViewModel by viewModels()
     private val smartPlugVM: SmartPlugViewModel by viewModels()
+    private val comfortDayVM: ComfortDayViewModel by viewModels()
 
-    // Launcher permesso notifiche (Android 13+)
-    private val requestNotifPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    // ==================================================================================
+    // RICHIESTA PERMESSO NOTIFICHE (Android 13+)
+    // ==================================================================================
+    private val requestNotifPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                // Avvio solo se siamo in orario di lavoro
-                if (isWorkingHours()) startAggregationServiceSafely()
-            } else {
-                // opzionale: snackbar/UX per spiegare perché serve il permesso
+                startAggregationServiceSafely()
             }
-        } else {
-            if (isWorkingHours()) startAggregationServiceSafely()
         }
-        // In ogni caso prova a schedulare gli allarmi (non richiede POST_NOTIFICATIONS)
-        ensureExactAlarmPermissionAndSchedule()
-    }
+
+    // ==================================================================================
+    // RICHIESTA DISABILITAZIONE BATTERY-OPTIMIZATION
+    // ==================================================================================
+    private val ignoreBatteryOptimLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            // Non serve gestire risposta
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1) Avvia il service solo in orario 08–20 e se permesso notifiche è concesso (33+)
-        maybeAskNotificationPermissionAndStartService()
-
-        // 2) SCHEDULING AUTOMATICO START/STOP (08:00 / 20:00) con allarmi esatti
-        ensureExactAlarmPermissionAndSchedule()
-
-        // 3) UI
+        // ==================================================================================
+        // UI
+        // ==================================================================================
         setContent {
             VitalityAppTheme {
+                val zones = mapVM.zones.collectAsState().value
+                val bitmap = mapVM.mapBitmap.collectAsState().value?.asAndroidBitmap()
+
                 DashboardScreen(
-                    zones = mapVM.zones.collectAsState().value,
-                    mapBitmap = mapVM.mapBitmap.collectAsState().value?.asAndroidBitmap(),
+                    zones = zones,
+                    mapBitmap = bitmap,
                     mapViewModel = mapVM,
                     temperatureViewModel = tempVM,
-                    historyViewModel = historyVM,
-                    smartPlugViewModel = smartPlugVM
+                    smartPlugViewModel = smartPlugVM,
+                    comfortDayViewModel = comfortDayVM
                 )
             }
         }
+
+        // ==================================================================================
+        // PROGRAMMAZIONE SERVIZIO (START/STOP giornaliero)
+        // ==================================================================================
+        ensureExactAlarmPermissionAndSchedule()
+
+        // Avvia servizio solo in orario lavorativo
+        maybeAskNotificationPermissionAndStartService()
+
+        // Battery optimization OFF per garantire polling stabile
+        maybeRequestIgnoreBatteryOptim()
     }
 
-    // ==== Working hours helper ====
+    // ==================================================================================
+    // ORARIO LAVORATIVO
+    // ==================================================================================
     private fun isWorkingHours(nowMs: Long = System.currentTimeMillis()): Boolean {
         val tz = TimeZone.getTimeZone("Europe/Rome")
         val cal = Calendar.getInstance(tz).apply { timeInMillis = nowMs }
-        val h = cal.get(Calendar.HOUR_OF_DAY)
-        return h in 8..19 // 08:00–19:59
+        return cal.get(Calendar.HOUR_OF_DAY) in 8..19
     }
 
-    // ==== Notifiche + avvio service ====
+    // ==================================================================================
+    // PERMESSO NOTIFICHE + START SERVIZIO
+    // ==================================================================================
     private fun maybeAskNotificationPermissionAndStartService() {
-        // Fuori orario → non avviare il foreground service (l’app resta usabile)
         if (!isWorkingHours()) return
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val hasNotifPerm = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
 
-            if (!hasNotifPerm) {
+            if (!granted) {
                 requestNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 return
             }
         }
-        // Se <33 o già concesso ⇒ avvia direttamente
+
         startAggregationServiceSafely()
     }
 
+    // ==================================================================================
+    // AVVIO SERVIZIO IN FOREGROUND (SICURO)
+    // ==================================================================================
     private fun startAggregationServiceSafely() {
         runCatching {
             val intent = Intent(this, VitalityAggregationService::class.java)
             startForegroundService(this, intent)
-        }.onFailure {
-            it.printStackTrace()
+        }.onFailure { e ->
+            e.printStackTrace()
         }
     }
 
-    // ==== Exact alarm permission (Android 12+) + scheduling automatico ====
+    // ==================================================================================
+    // EXACT ALARMS (Android 12+)
+    // ==================================================================================
     private fun ensureExactAlarmPermissionAndSchedule() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val am = getSystemService(AlarmManager::class.java)
-            if (!am.canScheduleExactAlarms()) {
-                // Mostra la schermata di sistema per consentire gli allarmi esatti
+            val alarmManager = getSystemService(AlarmManager::class.java)
+            if (!alarmManager.canScheduleExactAlarms()) {
+
                 val i = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
                     .setData(Uri.parse("package:$packageName"))
-                // Non c'è callback: l'utente tornerà all'app e potrai richiamare this per schedulare
+
                 runCatching { startActivity(i) }
                 return
             }
         }
-        // Se siamo qui, possiamo schedulare
-        AlarmScheduler.scheduleNextDailyStart(this) // 08:00 Europe/Rome
-        AlarmScheduler.scheduleNextDailyStop(this)  // 20:00 Europe/Rome
+
+        // PROGRAMMAZIONE “START/STOP” QUOTIDIANA
+        AlarmScheduler.scheduleNextDailyStart(this)
+        AlarmScheduler.scheduleNextDailyStop(this)
+    }
+
+    // ==================================================================================
+    // BATTERY OPTIMIZATION
+    // ==================================================================================
+    private fun maybeRequestIgnoreBatteryOptim() {
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+
+        val pm = getSystemService(PowerManager::class.java)
+        val pkg = packageName
+
+        if (!pm.isIgnoringBatteryOptimizations(pkg)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                .setData(Uri.parse("package:$pkg"))
+
+            runCatching { ignoreBatteryOptimLauncher.launch(intent) }
+        }
     }
 }
