@@ -320,4 +320,9 @@ class TemperatureViewModel(
         pollOutdoorJob?.cancel()
         super.onCleared()
     }
+
+    suspend fun getPropertyValue(deviceId: String, propertyId: String): Double? {
+        return getLatestDouble(deviceId, propertyId, propertyId)
+    }
+
 }

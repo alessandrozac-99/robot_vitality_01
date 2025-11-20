@@ -77,4 +77,7 @@ dependencies {
     //Chart
     implementation("io.github.ehsannarmani:compose-charts:0.2.0")
     implementation("co.yml:ycharts:2.1.0")
+
+    //Robot
+    implementation("com.robotemi:sdk:1.136.0")
 }

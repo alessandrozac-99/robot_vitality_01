@@ -1,32 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.vitality">
 
-    <!-- Permessi rete -->
+    <!-- ===================================================== -->
+    <!-- PERMESSI -->
+    <!-- ===================================================== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Foreground Service (richiesto su Android 14+) -->
+    <!-- Foreground service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- Notifiche per mostrare il FGS (API 33+) -->
+    <!-- Required on Android 13+ for foreground notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Per gli allarmi di start/stop -->
+    <!-- Exact alarms (Android 12+) -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
-    <!-- Per avviare il servizio al boot -->
+    <!-- Avvio dopo reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <uses-permission android:name="com.robotemi.sdk.permission.MAP" />
+
+
+    <!-- ===================================================== -->
+    <!-- APPLICATION -->
+    <!-- ===================================================== -->
     <application
         android:label="Vitality"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Vitality"
-        android:usesCleartextTraffic="true"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:theme="@style/Theme.Vitality">
 
+        <!-- ===================================================== -->
+        <!-- MAIN ACTIVITY -->
+        <!-- ===================================================== -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -37,10 +45,27 @@
             </intent-filter>
         </activity>
 
+
+        <!-- ===================================================== -->
+        <!-- SERVIZI -->
+        <!-- ===================================================== -->
+
+        <!-- Aggregation Service (già presente) -->
         <service
             android:name=".service.VitalityAggregationService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Comfort Coaching Service (NUOVO) -->
+        <service
+            android:name=".service.ComfortCoachService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+
+        <!-- ===================================================== -->
+        <!-- RECEIVERS -->
+        <!-- ===================================================== -->
 
         <receiver
             android:name=".receivers.DailyStartReceiver"
@@ -54,8 +79,8 @@
             android:name=".receivers.BootCompletedReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED"/>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 
@@ -67,5 +92,16 @@
             android:name=".receivers.StopAggregationReceiver"
             android:exported="true" />
 
+        <!-- Skill Temi -->
+        <meta-data
+            android:name="com.robotemi.sdk.metadata.SKILL"
+            android:value="@string/app_name" />
+
+        <!-- Permessi Temi -->
+        <meta-data
+            android:name="@string/metadata_permissions"
+            android:value="com.robotemi.permission.map,com.robotemi.permission.settings"/>
+
     </application>
+
 </manifest>
