@@ -1,3 +1,4 @@
+// Modified SmartPlugViewModel for local HTTP polling (more efficient)
 package com.example.vitality.viewmodel
 
 import android.util.Log
@@ -15,7 +16,7 @@ class SmartPlugViewModel(
 
     companion object {
         private const val TAG = "SmartPlugVM"
-        private const val POLL_MS = 60_000L
+        private const val POLL_MS = 30_000L   // faster since local HTTP is lightweight
     }
 
     private val _smartPlugs = MutableStateFlow<List<SmartPlugStatus>>(emptyList())
@@ -31,16 +32,7 @@ class SmartPlugViewModel(
     private var pollJob: Job? = null
 
     /**
-     * Calcola il timestamp dell’inizio del minuto successivo.
-     */
-    private fun nextMinuteBoundaryMs(): Long {
-        val now = System.currentTimeMillis()
-        val oneMinute = 60_000L
-        return ((now / oneMinute) + 1) * oneMinute
-    }
-
-    /**
-     * Carica le prese per una stanza e avvia polling sincronizzato al minuto.
+     * Avvia l'acquisizione per la stanza selezionata.
      */
     fun loadPlugsForRoom(room: String, pollEveryMs: Long? = POLL_MS) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -63,24 +55,17 @@ class SmartPlugViewModel(
                 _loading.emit(false)
             }
 
-            pollEveryMs?.let { startPollingSync(room) }
+            pollEveryMs?.let { startPolling(room, it) }
         }
     }
 
     /**
-     * Polling sincronizzato esattamente all'inizio di ogni minuto.
+     * Polling regolare (non serve sincronizzazione perfetta sul minuto per acquisizione locale).
      */
-    private fun startPollingSync(room: String) {
+    private fun startPolling(room: String, intervalMs: Long) {
         pollJob?.cancel()
 
         pollJob = viewModelScope.launch(Dispatchers.IO) {
-
-            // 🔥 Primo allineamento: aspetta il prossimo minuto esatto
-            val firstTick = nextMinuteBoundaryMs()
-            delay(firstTick - System.currentTimeMillis())
-
-            var nextTick = firstTick
-
             while (isActive) {
                 try {
                     val data = repository.fetchPlugsForRoom(room)
@@ -88,12 +73,7 @@ class SmartPlugViewModel(
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ poll '$room': ${e.message}")
                 }
-
-                // 🔥 Calcola il minuto successivo
-                nextTick += 60_000L
-                val wait = nextTick - System.currentTimeMillis()
-
-                delay(wait.coerceAtLeast(0))
+                delay(intervalMs)
             }
         }
     }

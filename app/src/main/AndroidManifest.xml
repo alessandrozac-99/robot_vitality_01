@@ -1,28 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.vitality">
 
-    <!-- Rete -->
+    <!-- Permessi rete -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Foreground Service "base" (tutte le versioni) -->
+    <!-- Foreground Service (richiesto su Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Foreground Service type=dataSync (obbligatorio da Android 14 / target 34+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- Notifiche (obbligatorio da Android 13 / API 33+ per mostrare la notifica del FGS) -->
+    <!-- Notifiche per mostrare il FGS (API 33+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Per gli allarmi di start/stop -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
-    <!-- Se non l'hai già: permesso per ricevere BOOT_COMPLETED -->
+    <!-- Per avviare il servizio al boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:label="Vitality"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Vitality">
+        android:theme="@style/Theme.Vitality"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"
@@ -34,7 +37,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground Service per sync dati: SOLO dataSync, niente connectedDevice -->
         <service
             android:name=".service.VitalityAggregationService"
             android:exported="false"
@@ -51,17 +53,16 @@
         <receiver
             android:name=".receivers.BootCompletedReceiver"
             android:exported="false">
-        <intent-filter>
-            <action android:name="android.intent.action.BOOT_COMPLETED"/>
-            <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
-        </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+            </intent-filter>
         </receiver>
 
         <receiver
             android:name=".receivers.StartAggregationReceiver"
             android:exported="true" />
 
-        <!-- STOP 20:00 -->
         <receiver
             android:name=".receivers.StopAggregationReceiver"
             android:exported="true" />

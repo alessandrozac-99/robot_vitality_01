@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Abilita HTTP in chiaro per i tuoi Shelly locali -->
+        <domain includeSubdomains="true">192.168.10.161</domain>
+        <domain includeSubdomains="true">192.168.10.177</domain>
+        <domain includeSubdomains="true">192.168.10.180</domain>
+        <domain includeSubdomains="true">192.168.10.153</domain>
+        <domain includeSubdomains="true">192.168.10.176</domain>
+        <domain includeSubdomains="true">192.168.10.146</domain>
+        <domain includeSubdomains="true">192.168.10.179</domain>
+        <domain includeSubdomains="true">auth.wattsense.com</domain>
+    </domain-config>
+</network-security-config>
