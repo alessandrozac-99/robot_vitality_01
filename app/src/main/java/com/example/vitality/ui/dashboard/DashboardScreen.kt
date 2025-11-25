@@ -84,6 +84,7 @@ fun DashboardScreen(
         selectedZone?.let { zone ->
             smartPlugViewModel.loadPlugsForRoom(zone.name, 60_000)
             temperatureViewModel.loadDataForZone(zone.name)
+            mapViewModel.setSelectedZone(zone.name)
         }
     }
 
@@ -137,6 +138,7 @@ fun DashboardScreen(
                         selectedZone = selectedZone,
                         onSelect = { selectedZone = it }
                     )
+
                 }
 
                 Column(
@@ -165,6 +167,12 @@ fun DashboardScreen(
 
                         AnimatedCardFadeSlide {
                             SpmvLiveCard(spmvLive)
+                        }
+                        Spacer(Modifier.height(12.dp))
+
+                        // Freddura
+                        AnimatedCardFadeSlide {
+                            FredduraCard()
                         }
 
                         Spacer(Modifier.height(16.dp))

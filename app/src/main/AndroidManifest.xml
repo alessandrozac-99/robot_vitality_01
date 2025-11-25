@@ -21,8 +21,8 @@
     <!-- Avvio dopo reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Temi SDK -->
     <uses-permission android:name="com.robotemi.sdk.permission.MAP" />
-
 
     <!-- ===================================================== -->
     <!-- APPLICATION -->
@@ -30,7 +30,8 @@
     <application
         android:label="Vitality"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.Vitality">
+        android:theme="@style/Theme.Vitality"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- ===================================================== -->
         <!-- MAIN ACTIVITY -->
@@ -45,23 +46,27 @@
             </intent-filter>
         </activity>
 
-
         <!-- ===================================================== -->
         <!-- SERVIZI -->
         <!-- ===================================================== -->
 
-        <!-- Aggregation Service (già presente) -->
+        <!-- Aggregation Service -->
         <service
             android:name=".service.VitalityAggregationService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Comfort Coaching Service (NUOVO) -->
+        <!-- Comfort Coaching Service -->
         <service
             android:name=".service.ComfortCoachService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- PID Heater Service — Nicole -->
+        <service
+            android:name=".service.NicoleHeaterControlService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- ===================================================== -->
         <!-- RECEIVERS -->

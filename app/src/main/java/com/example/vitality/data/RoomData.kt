@@ -71,7 +71,7 @@ val roomSensorIds: Map<String, RoomSensorIds> = mapOf(
 
 /** ⚡ Mappa delle prese Shelly per stanza. */
 val roomPlugIds: Map<String, RoomPlugIds> = mapOf(
-    "Nicole" to RoomPlugIds(plugs = listOf("PRESA_NICOLE", "PRESA_CECILIA")),
+    "Nicole" to RoomPlugIds(plugs = listOf("PRESA_NICOLE", "PRESA_CECILIA","PRESA_STUFETTA_NICOLE")),
     "Os"     to RoomPlugIds(plugs = listOf("PRESA_VITTORIA", "PRESA_RICHARD")),
     "Serena" to RoomPlugIds(plugs = listOf("PRESA_SERENA")),
     "Gloria" to RoomPlugIds(plugs = listOf("PRESA_GLORIA", "PRESA_NIBRAS"))

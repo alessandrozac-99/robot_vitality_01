@@ -9,6 +9,7 @@
         <domain includeSubdomains="true">192.168.10.176</domain>
         <domain includeSubdomains="true">192.168.10.146</domain>
         <domain includeSubdomains="true">192.168.10.179</domain>
+        <domain includeSubdomains="true">192.168.10.84</domain>n
         <domain includeSubdomains="true">auth.wattsense.com</domain>
     </domain-config>
 </network-security-config>

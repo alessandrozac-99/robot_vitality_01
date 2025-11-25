@@ -9,12 +9,8 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.example.vitality.coaching.ComfortCoachEngine
-import com.example.vitality.coaching.ComfortCoachFirebaseLogger
-import com.example.vitality.coaching.ComfortCoachMovementController
-import com.example.vitality.coaching.ComfortData
-import com.example.vitality.coaching.EnvironmentalSensorProvider
-import com.example.vitality.coaching.Normalizer
+import com.example.vitality.coaching.*
+import com.example.vitality.data.SmartPlugRepository
 import com.example.vitality.viewmodel.TemperatureViewModel
 import com.robotemi.sdk.Robot
 import com.robotemi.sdk.TtsRequest
@@ -24,38 +20,40 @@ import java.util.concurrent.TimeUnit
 class ComfortCoachService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val robot: Robot by lazy { Robot.getInstance() }
 
+    private val robot: Robot by lazy { Robot.getInstance() }
     private val temperatureVM = TemperatureViewModel()
     private val provider = EnvironmentalSensorProvider(temperatureVM)
     private val logger = ComfortCoachFirebaseLogger()
     private val engine = ComfortCoachEngine(robot, logger)
     private val movement = ComfortCoachMovementController(robot)
+    private val smartRepo = SmartPlugRepository()
 
-    // intervallo: ogni 1 minuto
-    private val intervalMs = TimeUnit.MINUTES.toMillis(5)
+    /** intervallo tra cicli interi */
+    private val intervalMs = TimeUnit.MINUTES.toMillis(15)
 
-    // cooldown per tipologia di intervento (COLD/COOL/WARM/HOT) per stanza: 20 minuti
-    private val cooldownMs = TimeUnit.MINUTES.toMillis(20)
+    /** cooldown interventi sulla stessa stanza */
+    private val cooldownMs = TimeUnit.MINUTES.toMillis(30)
 
-    /**
-     * mappa: stanzaNormalizzata -> (tipoIntervento -> timestampUltimoIntervento)
-     * tipoIntervento = comfortClass.name (COLD, COOL, WARM, HOT)
-     */
-    private val lastAlertIntervention =
-        mutableMapOf<String, MutableMap<String, Long>>()
+    /** room → tipo → ultimo intervento */
+    private val lastInterventions = mutableMapOf<String, MutableMap<String, Long>>()
+
+    private var loopStarted = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =====================================================================================
-    // ONCREATE — foreground immediato (obbligatorio)
-    // =====================================================================================
     override fun onCreate() {
         super.onCreate()
-        Log.e("COACH", "🔥🔥🔥 ComfortCoachService ONCREATE È PARTITO 🔥🔥🔥")
+        Log.e("COACH", "🔥 ComfortCoachService creato")
+    }
 
-        startForegroundImmediately()
-        startLoop()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundSafe()
+        if (!loopStarted) {
+            loopStarted = true
+            startMainLoop()
+        }
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -63,64 +61,56 @@ class ComfortCoachService : Service() {
         super.onDestroy()
     }
 
-    // =====================================================================================
-    // START FOREGROUND
-    // =====================================================================================
-    private fun startForegroundImmediately() {
+    // ------------------------------------------------------------
+    // Foreground immediate
+    // ------------------------------------------------------------
+    private fun startForegroundSafe() {
         val channelId = "comfortcoach_channel"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val ch = NotificationChannel(
                 channelId,
                 "Comfort Coach",
                 NotificationManager.IMPORTANCE_LOW
             )
-
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(ch)
         }
 
         val notif: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Comfort Coaching attivo")
-            .setContentText("Monitoraggio ambientale e interventi automatici")
+            .setContentText("Monitoraggio ambientale in corso…")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
 
         startForeground(2024, notif)
     }
 
-    // =====================================================================================
-    // COOLDOWN PER TIPO DI INTERVENTO
-    // =====================================================================================
-    private fun isAlertInCooldown(roomNorm: String, alertType: String): Boolean {
-        val roomMap = lastAlertIntervention[roomNorm] ?: return false
-        val lastTs = roomMap[alertType] ?: return false
-        val now = System.currentTimeMillis()
-        val inCd = (now - lastTs) < cooldownMs
-        if (inCd) {
-            Log.e(
-                "COACH",
-                "⏳ Cooldown attivo per stanza=$roomNorm, alert=$alertType → skip (Δ=${now - lastTs} ms)"
-            )
-        }
-        return inCd
+    // ------------------------------------------------------------
+    // Cooldown handling
+    // ------------------------------------------------------------
+    private fun inCooldown(room: String, type: String): Boolean {
+        val m = lastInterventions[room] ?: return false
+        val last = m[type] ?: return false
+        val active = (System.currentTimeMillis() - last) < cooldownMs
+        if (active) Log.w("COACH", "⏳ Cooldown attivo per $room ($type)")
+        return active
     }
 
-    private fun updateCooldown(roomNorm: String, alertType: String) {
-        val roomMap = lastAlertIntervention.getOrPut(roomNorm) { mutableMapOf() }
-        roomMap[alertType] = System.currentTimeMillis()
-        Log.e("COACH", "🧊 Aggiornato cooldown per stanza=$roomNorm tipo=$alertType")
+    private fun updateCooldown(room: String, type: String) {
+        lastInterventions
+            .getOrPut(room) { mutableMapOf() }[type] = System.currentTimeMillis()
     }
 
-    // =====================================================================================
-    // LOOP PRINCIPALE
-    // =====================================================================================
-    private fun startLoop() {
+    // ------------------------------------------------------------
+    // Main loop
+    // ------------------------------------------------------------
+    private fun startMainLoop() {
         scope.launch {
-            delay(8000) // avvio dolce
+            delay(5000)
             while (isActive) {
                 try {
-                    runCoachingCycleSequential()
+                    runCoachingCycle()
                 } catch (e: Exception) {
                     Log.e("COACH", "❌ Errore ciclo: ${e.message}", e)
                 }
@@ -129,130 +119,126 @@ class ComfortCoachService : Service() {
         }
     }
 
-    /**
-     * Logica richiesta:
-     * - misura tutte le stanze
-     * - decide dove intervenire
-     * - va in ogni stanza che richiede intervento, in sequenza
-     * - alla fine torna alla base
-     * - per ogni TIPO di intervento (COLD/COOL/WARM/HOT) su una stanza,
-     *   aspetta 20 minuti prima di rifare lo stesso tipo in quella stanza
-     */
-    private suspend fun runCoachingCycleSequential() {
+    // ------------------------------------------------------------
+    // Occupancy robusta
+    // ------------------------------------------------------------
+    private suspend fun isRoomOccupied(roomNorm: String): Boolean {
+        val room = provider.mapNormalizedToRoom(roomNorm) ?: return false
 
-        Log.e("COACH", "🔄 Avvio ciclo coaching sequenziale...")
-
-        val poiList = robot.locations ?: return
-
-        Log.e("COACH", "📍 POI trovati: $poiList")
-
-        // costruiamo lista di (roomPoi, roomNorm, alertType) su cui intervenire
-        data class Task(val poi: String, val roomNorm: String, val alertType: String)
-
-        val tasks = mutableListOf<Task>()
-
-        for (poi in poiList) {
-            // ignoriamo home base per l'intervento (non ha sensori dedicati)
-            if (Normalizer.normalize(poi) == Normalizer.normalize("home base")) {
-                Log.e("COACH", "ℹ️ Skip home base")
-                continue
-            }
-
-            val roomNorm = Normalizer.normalize(poi)
-
-            val data: ComfortData = provider.getComfortForPoi(roomNorm) ?: run {
-                Log.e("COACH", "⚠ Nessun dato ambiente valido per $poi")
-                continue
-            }
-
-            Log.e("COACH", "📊 Dati per $poi = $data")
-
-            val decision = engine.evaluateComfort(poi, data)
-            if (!decision.shouldCoach) {
-                Log.e("COACH", "🟢 Nessun intervento necessario su $poi")
-                continue
-            }
-
-            // Tipologia = comfortClass (COLD, COOL, WARM, HOT)
-            val alertType = data.comfortClass?.name ?: "THERMAL"
-
-            // se stesso tipo di intervento in cooldown per quella stanza → skip
-            if (isAlertInCooldown(roomNorm, alertType)) {
-                continue
-            }
-
-            Log.e("COACH", "🚨 Intervento candidato su $poi, tipo=$alertType, reason=${decision.reason}")
-            tasks += Task(poi = poi, roomNorm = roomNorm, alertType = alertType)
+        val plugs = try {
+            smartRepo.fetchPlugsForRoom(room)
+        } catch (e: Exception) {
+            Log.e("COACH", "⚠ Occupancy fallita: ${e.message}")
+            return false
         }
 
-        if (tasks.isEmpty()) {
-            Log.e("COACH", "✅ Nessun intervento da eseguire in questo ciclo")
+        if (plugs.isEmpty()) return false
+
+        val total = plugs.sumOf { it.apower }
+        Log.e("COACH", "👤 OCCUPANCY [$room] → sum=$total")
+
+        return total > 5.0
+    }
+
+    // ------------------------------------------------------------
+    // Main coaching flow
+    // ------------------------------------------------------------
+    private suspend fun runCoachingCycle() {
+
+        Log.e("COACH", "🔄 Avvio ciclo coaching…")
+
+        val allPoi = robot.locations ?: emptyList()
+        if (allPoi.isEmpty()) {
+            Log.e("COACH", "⚠ Nessun POI disponibile")
             return
         }
 
-        Log.e("COACH", "🧭 Interventi da eseguire in sequenza: ${tasks.map { it.poi to it.alertType }}")
+        data class Task(val poi: String, val roomNorm: String, val alertType: String)
+        val tasks = mutableListOf<Task>()
 
-        // Eseguiamo gli interventi uno dopo l'altro
-        for (task in tasks) {
-            val poi = task.poi
-            val roomNorm = task.roomNorm
-            val alertType = task.alertType
+        // -------------------------------
+        // SCANSIONE DI TUTTE LE STANZE
+        // -------------------------------
+        for (poi in allPoi) {
+            if (poi.equals("home base", true)) continue
 
-            Log.d("CoachNav", "➡️ goTo($poi)")
+            val norm = Normalizer.normalize(poi)
+            val comfort = provider.getComfortForPoi(norm) ?: continue
 
-            val completed = CompletableDeferred<Boolean>()
+            val decision = engine.evaluateComfort(poi, comfort)
+            if (!decision.shouldCoach) continue
+
+            if (!isRoomOccupied(norm)) continue
+
+            val type = comfort.comfortClass?.name ?: "GENERIC"
+
+            if (inCooldown(norm, type)) continue
+
+            tasks += Task(poi, norm, type)
+        }
+
+        if (tasks.isEmpty()) {
+            Log.e("COACH", "✔ Nessuna stanza richiede intervento")
+            return
+        }
+
+        // -------------------------------
+        // PER OGNI STANZA: vai → parla → logga
+        // -------------------------------
+        for (t in tasks) {
+
+            val arrived = CompletableDeferred<Boolean>()
 
             movement.navigate(
-                poi = poi,
-                onArrival = {
-                    Log.d("CoachNav", "🏁 Arrivato → $poi")
-                    completed.complete(true)
-                },
-                onAbort = {
-                    Log.e("CoachNav", "❌ ABORT → $poi")
-                    completed.complete(false)
-                }
+                t.poi,
+                onArrival = { arrived.complete(true) },
+                onAbort   = { arrived.complete(false) }
             )
 
-            val ok = completed.await()
+            val success = withTimeoutOrNull(60_000) {  // 60s timeout
+                arrived.await()
+            } ?: false
 
-            if (!ok) {
-                Log.e("COACH", "⚠ Intervento fallito/abortito su $poi, passo al prossimo")
+            if (!success) {
+                Log.e("COACH", "⚠ Fallito → skip ${t.poi}")
                 continue
             }
 
-            // Arrivato a destinazione → ricalcoliamo i dati (opzionale ma più realistico)
-            val dataAtArrival = provider.getComfortForPoi(roomNorm)
-            val decisionAtArrival = dataAtArrival?.let { engine.evaluateComfort(poi, it) }
+            // Ricontrolla comfort
+            val afterData = provider.getComfortForPoi(t.roomNorm)
+            val recheck = afterData?.let { engine.evaluateComfort(t.poi, it) }
 
-            if (dataAtArrival != null && decisionAtArrival != null && decisionAtArrival.shouldCoach) {
-                Log.e("COACH", "🗣 Intervento vocale su $poi → ${decisionAtArrival.reason}")
-                speak(decisionAtArrival.reason)
+            if (afterData != null && recheck != null && recheck.shouldCoach) {
+
+                val message = buildString {
+                    append(recheck.reason)
+                    if (recheck.suggestions.isNotEmpty()) {
+                        append(". ")
+                        append(recheck.suggestions.joinToString(". "))
+                    }
+                }
+
+                speak(message)
 
                 logger.logComfortEvent(
-                    room = poi,
-                    data = dataAtArrival,
-                    message = decisionAtArrival.reason,
+                    room = t.poi,
+                    data = afterData,
+                    message = message,
                     occupancy = true
                 )
 
-                // aggiorniamo cooldown SOLO se è stato effettivamente fatto l'annuncio
-                updateCooldown(roomNorm, alertType)
-            } else {
-                Log.e("COACH", "ℹ️ Arrivato a $poi ma non serve più intervento (comfort ok)")
+                updateCooldown(t.roomNorm, t.alertType)
             }
         }
 
-        // alla fine del giro → torna alla base
-        Log.d("CoachNav", "🏠 Ritorno alla base")
+        // -------------------------------
+        // RITORNO ALLA BASE
+        // -------------------------------
+        Log.e("COACH", "🏠 RITORNO ALLA HOME BASE")
         robot.goTo("home base")
     }
 
-    // =====================================================================================
-    // TTS
-    // =====================================================================================
     private fun speak(text: String) {
-        val req = TtsRequest.create(text, false)
-        robot.speak(req)
+        robot.speak(TtsRequest.create(text, false))
     }
 }

@@ -3,22 +3,32 @@ package com.example.vitality.coaching
 import android.util.Log
 import com.example.vitality.data.roomSensorIds
 import com.example.vitality.data.Spmv
-import com.example.vitality.data.ComfortClass
 import com.example.vitality.viewmodel.TemperatureViewModel
 
 class EnvironmentalSensorProvider(
     private val vm: TemperatureViewModel
 ) {
 
+    /**
+     * Mappa un nome normalizzato (es. "nicole") → nome stanza esatto ("Nicole")
+     */
+    fun mapNormalizedToRoom(normalized: String): String? {
+        return roomSensorIds.keys.firstOrNull {
+            Normalizer.normalize(it) == normalized
+        }
+    }
+
+    /**
+     * Acquisisce i dati della stanza associata al POI
+     */
     suspend fun getComfortForPoi(poiRaw: String): ComfortData? {
 
         val normalized = Normalizer.normalize(poiRaw)
 
-        val roomKey = roomSensorIds.keys.firstOrNull {
-            Normalizer.normalize(it) == normalized
-        } ?: return null.also {
-            Log.e("ENV", "❌ Nessun sensore associato a $poiRaw")
-        }
+        val roomKey = mapNormalizedToRoom(normalized)
+            ?: return null.also {
+                Log.e("ENV", "❌ Nessun sensore associato a $poiRaw")
+            }
 
         val ids = roomSensorIds[roomKey]!!
 
@@ -45,7 +55,7 @@ class EnvironmentalSensorProvider(
             pmv2 = sp.pmv2,
             pmv3 = sp.pmv3,
             cloPred = sp.cloPred,
-            comfortClass = sp.comfortClass,   // 👈 ENUM
+            comfortClass = sp.comfortClass,
             co2 = co2,
             lux = lux,
             voc = voc,

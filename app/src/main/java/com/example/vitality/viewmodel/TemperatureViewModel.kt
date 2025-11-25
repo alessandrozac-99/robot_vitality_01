@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlin.math.round
 import java.util.Calendar
 import java.util.TimeZone
+import kotlin.Double
 
 class TemperatureViewModel(
     private val wattsense: WattsenseApi = RetrofitClient.create(),
@@ -64,8 +65,10 @@ class TemperatureViewModel(
         val pmv: Double? = null,
         val pmv2: Double? = null,
         val pmv3: Double? = null,
-        val cloPred: Double? = null
+        val cloPred: Double? = null,
+        val pmvIso: Double? = null        // ★ AGGIUNTO
     )
+
     private val _spmv = MutableStateFlow(SpmvUi())
     val spmv: StateFlow<SpmvUi> = _spmv
 
@@ -310,7 +313,7 @@ class TemperatureViewModel(
                 pmv = r.pmv,
                 pmv2 = r.pmv2,
                 pmv3 = r.pmv3,
-                cloPred = clo
+                cloPred = clo,
             )
         }
     }

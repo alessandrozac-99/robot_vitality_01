@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
 import com.example.vitality.service.VitalityAggregationService
 import com.example.vitality.service.ComfortCoachService
+import com.example.vitality.service.NicoleHeaterControlService
 import com.example.vitality.ui.dashboard.DashboardScreen
 import com.example.vitality.ui.map.TemiMapViewModel
 import com.example.vitality.ui.theme.VitalityAppTheme
@@ -31,9 +32,6 @@ import java.util.*
 
 class MainActivity : ComponentActivity() {
 
-    // ============================================================
-    // DEBUG FLAG — attivalo per far partire SEMPRE i servizi
-    // ============================================================
     private val DEBUG_ALWAYS_ON = true
 
     private val mapVM: TemiMapViewModel by viewModels()
@@ -41,36 +39,29 @@ class MainActivity : ComponentActivity() {
     private val smartPlugVM: SmartPlugViewModel by viewModels()
     private val comfortDayVM: ComfortDayViewModel by viewModels()
 
-    // =====================================================================
-    // PERMESSO NOTIFICHE (necessario per avviare servizi foreground)
-    // =====================================================================
+    // ---------------------------------------------------------------
+    // PERMESSO NOTIFICHE (obbligatorio per servizi foreground)
+    // ---------------------------------------------------------------
     private val requestNotifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                Log.e("MAIN", "📌 Permesso notifiche concesso → avvio servizi")
-                startAggregationServiceSafely()
-                startComfortCoachServiceSafely()
+                Log.e("MAIN", "📌 Permesso notifiche OK → avvio servizi")
+                startAllServicesSafely()
             } else {
-                Log.e("MAIN", "❌ Permesso notifiche negato → servizi non partiranno")
+                Log.e("MAIN", "❌ Permesso notifiche NEGATO → servizi non partiranno")
             }
         }
 
-    // =====================================================================
-    // BATTERY-OPTIMIZATION
-    // =====================================================================
     private val ignoreBatteryOptimLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            Log.d("MAIN", "⚡ Battery optimization richiesta")
+            Log.d("MAIN", "⚡ Richiesta battery optimization completata")
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        Log.e("MAIN", "🔥 MainActivity ONCREATE")
+        Log.e("MAIN", "🔥 MainActivity.onCreate()")
 
-        // =====================================================================
-        // UI
-        // =====================================================================
         setContent {
             VitalityAppTheme {
                 val zones = mapVM.zones.collectAsState().value
@@ -87,47 +78,36 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // =====================================================================
-        // EXACT ALARMS
-        // =====================================================================
         ensureExactAlarmPermissionAndSchedule()
 
-        // =====================================================================
-        // AVVIO SERVIZI
-        // =====================================================================
         maybeAskNotificationPermissionAndStartServices()
 
-        // =====================================================================
-        // BATTERY OPTIMIZATION
-        // =====================================================================
         maybeRequestIgnoreBatteryOptim()
     }
 
-    // =====================================================================
-    // ORARIO LAVORATIVO (ma con override debug)
-    // =====================================================================
+    // ---------------------------------------------------------------
+    // Finestra di attivazione (ma con override DEBUG)
+    // ---------------------------------------------------------------
     private fun isWorkingHours(nowMs: Long = System.currentTimeMillis()): Boolean {
-        if (DEBUG_ALWAYS_ON) return true  // 🔥 Override per debug
+        if (DEBUG_ALWAYS_ON) return true
 
         val tz = TimeZone.getTimeZone("Europe/Rome")
         val cal = Calendar.getInstance(tz).apply { timeInMillis = nowMs }
         return cal.get(Calendar.HOUR_OF_DAY) in 8..19
     }
 
-    // =====================================================================
-    // PERMESSO NOTIFICHE + START SERVIZI
-    // =====================================================================
+    // ---------------------------------------------------------------
+    // Notifiche + avvio servizi
+    // ---------------------------------------------------------------
     private fun maybeAskNotificationPermissionAndStartServices() {
 
-        Log.e("MAIN", "🕒 isWorkingHours = ${isWorkingHours()}")
+        Log.e("MAIN", "⏱ isWorkingHours = ${isWorkingHours()}")
 
-        // 🔥 Con DEBUG_ALWAYS_ON → avvio sempre i servizi
         if (!isWorkingHours()) {
-            Log.w("MAIN", "⛔ Fuori orario lavorativo → servizi NON avviati")
+            Log.w("MAIN", "⛔ Fuori orario → servizi NON avviati")
             return
         }
 
-        // Permesso notifiche
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -135,49 +115,63 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
 
             if (!granted) {
-                Log.w("MAIN", "🔔 Permesso notifiche mancante → lo richiedo")
+                Log.w("MAIN", "🔔 Richiedo permesso notifiche…")
                 requestNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 return
             }
         }
 
-        Log.e("MAIN", "🚀 Avvio servizi…")
+        startAllServicesSafely()
+    }
+
+    // ---------------------------------------------------------------
+    // Avvio tutti i servizi
+    // ---------------------------------------------------------------
+    private fun startAllServicesSafely() {
         startAggregationServiceSafely()
         startComfortCoachServiceSafely()
+        startNicoleHeaterServiceSafely()
     }
 
-    // =====================================================================
-    // AVVIO SERVIZIO AGGREGATION
-    // =====================================================================
     private fun startAggregationServiceSafely() {
         runCatching {
-            Log.e("MAIN", "📡 Avvio VitalityAggregationService")
-            val intent = Intent(this, VitalityAggregationService::class.java)
-            startForegroundService(this, intent)
+            Log.e("MAIN", "📡 Start VitalityAggregationService")
+            startForegroundService(
+                this,
+                Intent(this, VitalityAggregationService::class.java)
+            )
         }.onFailure { it.printStackTrace() }
     }
 
-    // =====================================================================
-    // AVVIO SERVIZIO COACHING
-    // =====================================================================
     private fun startComfortCoachServiceSafely() {
         runCatching {
-            Log.e("MAIN", "🤖 Avvio ComfortCoachService")
-            val intent = Intent(this, ComfortCoachService::class.java)
-            startForegroundService(this, intent)
+            Log.e("MAIN", "🤖 Start ComfortCoachService")
+            startForegroundService(
+                this,
+                Intent(this, ComfortCoachService::class.java)
+            )
         }.onFailure { it.printStackTrace() }
     }
 
-    // =====================================================================
-    // EXACT ALARMS
-    // =====================================================================
+    private fun startNicoleHeaterServiceSafely() {
+        runCatching {
+            Log.e("MAIN", "🔥 Start NicoleHeaterControlService")
+            startForegroundService(
+                this,
+                Intent(this, NicoleHeaterControlService::class.java)
+            )
+        }.onFailure { it.printStackTrace() }
+    }
+
+    // ---------------------------------------------------------------
+    // Exact alarms
+    // ---------------------------------------------------------------
     private fun ensureExactAlarmPermissionAndSchedule() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = getSystemService(AlarmManager::class.java)
             if (!alarmManager.canScheduleExactAlarms()) {
 
                 Log.w("MAIN", "⏰ Exact alarms non permessi → chiedo permesso")
-
                 val i = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
                     .setData(Uri.parse("package:$packageName"))
 
@@ -191,9 +185,9 @@ class MainActivity : ComponentActivity() {
         AlarmScheduler.scheduleNextDailyStop(this)
     }
 
-    // =====================================================================
-    // BATTERY OPTIMIZATION
-    // =====================================================================
+    // ---------------------------------------------------------------
+    // Battery optimization
+    // ---------------------------------------------------------------
     private fun maybeRequestIgnoreBatteryOptim() {
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
@@ -202,12 +196,12 @@ class MainActivity : ComponentActivity() {
         val pkg = packageName
 
         if (!pm.isIgnoringBatteryOptimizations(pkg)) {
-            Log.w("MAIN", "⚡ Battery optimization ATTIVA → richiedo esclusione")
+            Log.w("MAIN", "⚡ Battery optimization attiva → chiedo esclusione")
 
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
                 .setData(Uri.parse("package:$pkg"))
 
-            runCatching { ignoreBatteryOptimLauncher.launch(intent) }
+            ignoreBatteryOptimLauncher.launch(intent)
         }
     }
 }

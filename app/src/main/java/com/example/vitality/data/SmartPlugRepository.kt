@@ -50,7 +50,9 @@ class SmartPlugRepository(
         "PRESA_RICHARD"  to "192.168.10.153",
         "PRESA_NIBRAS"   to "192.168.10.176",
         "PRESA_GLORIA"   to "192.168.10.146",
-        "PRESA_CECILIA"  to "192.168.10.179"
+        "PRESA_CECILIA"  to "192.168.10.179",
+        "PRESA_STUFETTA_NICOLE" to "192.168.10.84"
+
     )
 
     private fun offlineStatus(name: String, reason: String) = SmartPlugStatus(
@@ -185,4 +187,19 @@ class SmartPlugRepository(
         for (i in 1 until v.size) if (abs(v[i] - v[i - 1]) < 1e-6) same++
         return same.toDouble() / (v.size - 1)
     }
+
+    suspend fun switchOn(name: String) = withContext(Dispatchers.IO) {
+        plugIpMap[name]?.let { ip ->
+            val url = "http://$ip/rpc/Switch.Set?id=0&on=true"
+            client.newCall(Request.Builder().url(url).get().build()).execute().close()
+        }
+    }
+
+    suspend fun switchOff(name: String) = withContext(Dispatchers.IO) {
+        plugIpMap[name]?.let { ip ->
+            val url = "http://$ip/rpc/Switch.Set?id=0&on=false"
+            client.newCall(Request.Builder().url(url).get().build()).execute().close()
+        }
+    }
+
 }
