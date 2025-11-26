@@ -11,7 +11,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.vitality.data.firebase.HeaterPidFirebaseLogger
 import com.example.vitality.pid.HeaterNicoleRepository
-import com.example.vitality.pid.HeaterPIDController   // <-- ora coerente con il tuo file
+import com.example.vitality.pid.HeaterPIDController
 import com.example.vitality.data.SmartPlugRepository
 import com.example.vitality.viewmodel.TemperatureViewModel
 import kotlinx.coroutines.*
@@ -32,11 +32,12 @@ class NicoleHeaterControlService : Service() {
         logger = firebaseLogger
     )
 
-    // === PID HVAC (P-only + deadband) ===
+    // === PID HVAC (isteresi + anti short-cycle) ===
     private val pid = HeaterPIDController(
-        setpoint = 0.0,
-        comfortBand = 0.2,
-        kp = 10.0
+        turnOnThreshold = -0.20,
+        turnOffThreshold = +0.15,
+        minOffDurationMs = 180_000,
+        minOnDurationMs = 120_000
     )
 
     private val intervalMs = 180_000L // ciclo ogni 3 minuti
@@ -46,9 +47,6 @@ class NicoleHeaterControlService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =====================================================================================
-    // ON CREATE
-    // =====================================================================================
     override fun onCreate() {
         super.onCreate()
         startForegroundServiceInternal()
@@ -118,12 +116,12 @@ class NicoleHeaterControlService : Service() {
         // 2) Occupazione
         val occupied = isRoomOccupied()
         if (!occupied) {
-            Log.w(TAG, "🚫 Stanza Nicole NON occupata → OFF")
+            Log.w(TAG, "🚫 Stanza NON occupata → OFF")
             heaterRepo.turnOff()
             return
         }
 
-        // 3) Caricamento dati sensori
+        // 3) Carico dati sensore
         temperatureVM.loadDataForZone("Nicole")
         delay(1500)
 
@@ -141,47 +139,32 @@ class NicoleHeaterControlService : Service() {
         if (!heaterRepo.isSafe(status)) {
             Log.e(TAG, "❌ NON sicura → OFF")
             heaterRepo.turnOff()
+            firebaseLogger.logSafetyEvent("unsafe_plug")
             return
         }
 
-        // 5) PID HVAC (proporzionale + deadband)
-        val pidOut = pid.update(spmv)
+        // 5) ISTERESI + ANTI SHORT-CYCLE
+        val newHeaterState = pid.update(spmv)
 
-        Log.e(TAG, "📊 PID RESULT → PMV=$spmv | output=$pidOut")
+        Log.e(TAG, "📊 PID RESULT → PMV=$spmv | heaterShouldBe=$newHeaterState")
 
-        // 6) Log Firebase
+        // 6) Logging coerente col nuovo schema
         firebaseLogger.logPidStep(
             pmv = spmv,
-            error = pid.lastError,
-            pidOutput = pidOut,
-            heaterState = status?.output ?: false,
+            heaterState = newHeaterState,
             occupancy = occupied,
             tIndoor = tAmb,
             plugPower = status?.apower,
-            integral = pid.integralTerm,
-            derivative = pid.derivativeTerm,
             dtMs = intervalMs
         )
 
-        // 7) Decisione ON/OFF secondo logica HVAC
-        when {
-            // PMV ≥ 0 → troppo caldo → OFF HARD
-            spmv >= 0.0 -> {
-                Log.e(TAG, "🔥 PMV ≥ 0 → OFF HARD")
-                heaterRepo.turnOff()
-            }
-
-            // Zona comfort: -0.2 ≤ PMV < 0 → OFF
-            pidOut <= 0.0 -> {
-                Log.e(TAG, "⚖ Comfort zone → OFF")
-                heaterRepo.turnOff()
-            }
-
-            // PMV < -0.2 → freddo → ON
-            else -> {
-                Log.e(TAG, "❄ Freddo → ON")
-                heaterRepo.turnOn()
-            }
+        // 7) Comando fisico ON/OFF
+        if (newHeaterState) {
+            Log.e(TAG, "❄ Freddo → ON (isteresi)")
+            heaterRepo.turnOn()
+        } else {
+            Log.e(TAG, "🔥 Caldo/comfort → OFF (isteresi)")
+            heaterRepo.turnOff()
         }
     }
 

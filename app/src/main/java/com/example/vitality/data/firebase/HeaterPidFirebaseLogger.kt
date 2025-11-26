@@ -5,125 +5,83 @@ import com.google.firebase.database.FirebaseDatabase
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * Logger ottimizzato per il PID della stufetta in Nicole.
- * Ridotto del 70% rispetto alla versione precedente.
- */
 class HeaterPidFirebaseLogger {
 
     private val db = FirebaseDatabase.getInstance()
     private val TAG = "HeaterPidLogger"
 
     private val tz = TimeZone.getTimeZone("Europe/Rome")
-    private val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
-        timeZone = tz
-    }
-    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).apply {
-        timeZone = tz
-    }
 
-    private fun todayPath(): String =
-        dateFmt.format(Date(System.currentTimeMillis()))
+    private val fmtDay = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = tz }
+    private val fmtHour = SimpleDateFormat("HH", Locale.US).apply { timeZone = tz }
+    private val fmtSecKey = SimpleDateFormat("mmss", Locale.US).apply { timeZone = tz }
 
-    private fun nowTimestamp(): Long =
-        System.currentTimeMillis()
+    private fun nowMs(): Long = System.currentTimeMillis()
 
-    private fun nowTimeKey(): String =
-        timeFmt.format(Date(System.currentTimeMillis()))
+    private fun dayBucket(): String = fmtDay.format(Date(nowMs()))
+    private fun hourBucket(): String = fmtHour.format(Date(nowMs()))
+    private fun secKey(): String = fmtSecKey.format(Date(nowMs()))
 
-    // =====================================================================================
-    // LOG PID — versione ridotta e ottimizzata
-    // =====================================================================================
-    fun logPidSample(
-        pmv: Double?,
-        error: Double,
-        pidOutput: Double,
+    /**
+     * Log coerente con il nuovo PID ON/OFF (isteresi + anti short-cycle).
+     * Solo campi reali: PMV, stato, occupancy, T, potenza.
+     */
+    fun logPidStep(
+        pmv: Double,
         heaterState: Boolean,
         occupancy: Boolean,
         tIndoor: Double?,
         plugPower: Double?,
-        pidIntegral: Double,
-        pidDerivative: Double
+        dtMs: Long
     ) {
-        val day = todayPath()
-        val timeKey = nowTimeKey()
-        val path = "heater_pid/nicole/logs/$day/$timeKey"
+        val ts = nowMs()
+        val day = dayBucket()
+        val hour = hourBucket()
+        val key = secKey()
 
-        val payload = mutableMapOf<String, Any>(
-            "timestamp" to nowTimestamp(),
+        val path = "heater_pid/nicole/logs/$day/$hour/$key"
 
-            // stato ambiente
-            "pmv" to (pmv ?: 0.0),
+        val payload = mapOf(
+            "type" to "pid_step",
+            "timestamp" to ts,
+            "pmv" to pmv,
             "t_indoor" to (tIndoor ?: 0.0),
             "plug_power" to (plugPower ?: 0.0),
             "occupancy" to occupancy,
-
-            // PID
-            "error" to error,
-            "pid_output" to pidOutput,
-            "i_term" to pidIntegral,
-            "d_term" to pidDerivative,
-
-            // output attuatore
-            "heater_on" to heaterState
+            "heater_on" to heaterState,
+            "dt_ms" to dtMs
         )
 
         db.getReference(path).setValue(payload)
         Log.i(TAG, "PID LOG → $path = $payload")
     }
 
-    // =====================================================================================
-    // WRAPPER COMPATIBILE — usato dal servizio NicoleHeaterControlService
-    // =====================================================================================
-    fun logPidStep(
-        pmv: Double?,
-        error: Double,
-        pidOutput: Double,
-        heaterState: Boolean,
-        occupancy: Boolean,
-        tIndoor: Double?,
-        plugPower: Double?,
-        integral: Double,
-        derivative: Double,
-        dtMs: Long   // ignorato ma mantenuto per compatibilità
-    ) {
-        logPidSample(
-            pmv = pmv,
-            error = error,
-            pidOutput = pidOutput,
-            heaterState = heaterState,
-            occupancy = occupancy,
-            tIndoor = tIndoor,
-            plugPower = plugPower,
-            pidIntegral = integral,
-            pidDerivative = derivative
-        )
-    }
-
-    // =====================================================================================
-    // LOG STATO STUFETTA
-    // =====================================================================================
     fun logHeaterState(isOn: Boolean) {
-        val ref = db.getReference("heater_pid/nicole/state")
+        val ts = nowMs()
+
+        val path = "heater_pid/nicole/state"
         val payload = mapOf(
+            "type" to "heater_state",
             "heater_on" to isOn,
-            "timestamp" to nowTimestamp()
+            "timestamp" to ts
         )
-        ref.setValue(payload)
+
+        db.getReference(path).setValue(payload)
         Log.i(TAG, "STATE LOG → $payload")
     }
 
-    // =====================================================================================
-    // LOG EVENTI DI SICUREZZA (separati e indepedenti)
-    // =====================================================================================
     fun logSafetyEvent(event: String) {
-        val day = todayPath()
-        val timeKey = nowTimeKey()
-        val path = "heater_pid/nicole/safety/$day/$timeKey"
+        val ts = nowMs()
+        val day = dayBucket()
+        val hour = hourBucket()
+        val key = secKey()
+
+        val path = "heater_pid/nicole/safety/$day/$hour/$key"
 
         val payload = mapOf(
+            "type" to "safety_event",
             "event" to event,
-            "timestamp" to nowTimestamp()
+            "timestamp" to ts
         )
 
         db.getReference(path).setValue(payload)

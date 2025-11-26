@@ -1,44 +1,46 @@
 package com.example.vitality.pid
 
 /**
- * Controller HVAC dedicato alla stufetta ON/OFF basato su PMV.
+ * Controllo ON/OFF basato su PMV con isteresi definita:
+ *  - Accensione: PMV <= -0.20
+ *  - Spegnimento: PMV >= +0.15
  *
- * - PMV < -0.2  → freddo → possibile ON
- * - -0.2 ≤ PMV ≤ +0.2 → comfort → stufetta OFF
- * - PMV > +0.0 → troppo caldo → OFF STRICT
- *
- * Controller proporzionale con deadband.
+ * Include protezioni anti short-cycle:
+ *  - minimo tempo OFF prima di riaccendere
+ *  - minimo tempo ON prima di spegnere
  */
 class HeaterPIDController(
-    var setpoint: Double = 0.0,      // target PMV
-    private val comfortBand: Double = 0.2,
-    private val kp: Double = 10.0    // molto più alto = migliore risposta ON/OFF
+
+    private val turnOnThreshold: Double = -0.20,   // ACCENSIONE
+    private val turnOffThreshold: Double = +0.15,  // SPEGNIMENTO
+
+    private val minOffDurationMs: Long = 180_000,  // 3 min OFF → protezione
+    private val minOnDurationMs: Long = 120_000    // 2 min ON → stabilità
 ) {
 
-    var lastError: Double = 0.0
+    private var lastSwitchTime: Long = 0L
+    var isHeaterOn: Boolean = false
         private set
 
-    var integralTerm: Double = 0.0  // sempre zero in questa architettura
-        private set
+    fun update(pmv: Double, now: Long = System.currentTimeMillis()): Boolean {
 
-    var derivativeTerm: Double = 0.0  // sempre zero
-        private set
+        val elapsed = now - lastSwitchTime
 
-    fun update(pmv: Double, dt: Double = 0.0): Double {
+        // === LOGICA ACCENSIONE ===
+        if (!isHeaterOn) {
+            if (pmv <= turnOnThreshold && elapsed >= minOffDurationMs) {
+                isHeaterOn = true
+                lastSwitchTime = now
+            }
+        }
+        // === LOGICA SPEGNIMENTO ===
+        else {
+            if (pmv >= turnOffThreshold && elapsed >= minOnDurationMs) {
+                isHeaterOn = false
+                lastSwitchTime = now
+            }
+        }
 
-        val error = setpoint - pmv
-        lastError = error
-
-        // HARD cutoff: se PMV >= 0 → OFF sempre
-        if (error <= 0.0) return 0.0
-
-        // Zona comfort: da -0.2 a 0.0 → stufetta OFF
-        if (error < comfortBand) return 0.0
-
-        // Proporzionale puro
-        val p = kp * error
-
-        // Il servizio userà (output > 0) come ON
-        return p
+        return isHeaterOn
     }
 }
