@@ -9,16 +9,17 @@ class ComfortCoachMovementController(
     private val robot: Robot
 ) : OnGoToLocationStatusChangedListener {
 
-    private var target: String? = null
-    private var onArrival: (() -> Unit)? = null
-    private var onFinalAbort: (() -> Unit)? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    private var target: String? = null
     private var retries = 0
     private val maxRetries = 3
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var onArrival: (() -> Unit)? = null
+    private var onAbort: (() -> Unit)? = null
 
     init {
+        Log.e("COACH_MOVE", "📡 MovementController inizializzato")
         robot.addOnGoToLocationStatusChangedListener(this)
     }
 
@@ -27,21 +28,19 @@ class ComfortCoachMovementController(
         onArrival: () -> Unit,
         onAbort: () -> Unit
     ) {
-        // Reset state
+        Log.e("COACH_MOVE", "➡ navigate() richiesto → $poi")
+
         target = poi
-        this.onArrival = onArrival
-        this.onFinalAbort = onAbort
         retries = 0
+        this.onArrival = onArrival
+        this.onAbort = onAbort
 
-        Log.d("CoachNav", "➡️ NAVIGATE → $poi")
-
-        // stop any previous movement
+        Log.e("COACH_MOVE", "⛔ Movimento precedente fermato")
         robot.stopMovement()
 
-        // allow stabilization
         scope.launch {
-            delay(500)
-            Log.d("CoachNav", "🚀 goTo($poi)")
+            delay(300)
+            Log.e("COACH_MOVE", "🚗 goTo($poi)")
             robot.goTo(poi)
         }
     }
@@ -52,75 +51,64 @@ class ComfortCoachMovementController(
         descriptionId: Int,
         description: String
     ) {
-        if (location != target) return
+
+        Log.e(
+            "COACH_MOVE_STATUS",
+            "📍 STATUS → location=$location | status=$status | desc=$description"
+        )
+
+        // Se non è il target attuale → ignoralo
+        if (target == null || location != target) {
+            Log.w(
+                "COACH_MOVE_STATUS",
+                "⚠ Evento ignorato → target attuale=$target"
+            )
+            return
+        }
 
         when (status) {
 
-            OnGoToLocationStatusChangedListener.START -> {
-                Log.d("CoachNav", "🏁 START → $location")
-            }
-
-            OnGoToLocationStatusChangedListener.GOING -> {
-                Log.d("CoachNav", "➡️ GOING → $location")
-            }
-
-            OnGoToLocationStatusChangedListener.CALCULATING -> {
-                Log.d("CoachNav", "🧮 CALCULATING → $location")
-            }
-
-            OnGoToLocationStatusChangedListener.REPOSING -> {
-                Log.d("CoachNav", "♻️ REPOSING → $location")
-            }
-
             OnGoToLocationStatusChangedListener.COMPLETE -> {
-                Log.d("CoachNav", "✅ COMPLETE → $location")
+                Log.e("COACH_MOVE", "🏁 ARRIVATO a $location (retries=$retries)")
+                target = null   // 🔥 RESET FONDAMENTALE
                 onArrival?.invoke()
             }
 
             OnGoToLocationStatusChangedListener.ABORT -> {
-                Log.e("CoachNav", "❌ ABORT → $location  (retry=$retries/$maxRetries)")
+
+                Log.e("COACH_MOVE", "❌ ABORT a $location (retry=$retries/$maxRetries)")
 
                 if (retries < maxRetries) {
                     retries++
-
-                    // Backoff esponenziale
-                    val wait = when (retries) {
-                        1 -> 4000L
-                        2 -> 6000L
-                        else -> 10000L
-                    }
-
-                    Log.w("CoachNav", "⏳ Retry #$retries tra ${wait}ms")
-
-                    scope.launch {
-                        // fermo movimento pendente
-                        robot.stopMovement()
-
-                        // stabilizzazione sensori
-                        delay(500)
-
-                        // rilocalizzazione (se SDK supporta)
-                        try {
-                            robot.repose(null)
-                            Log.d("CoachNav", "📡 Rilocalizzazione richiesta")
-                        } catch (_: Exception) {
-                            Log.w("CoachNav", "⚠ relocalize() non supportato")
-                        }
-
-                        // attesa backoff
-                        delay(wait)
-
-                        Log.d("CoachNav", "📤 Retry movimento → $location")
-                        robot.goTo(location)
-                    }
-
+                    retryMove(location)
                 } else {
-                    // troppi abort → fallimento definitivo
-                    Log.e("CoachNav", "💀 ABORT FINALE → stop e callback")
+                    Log.e("COACH_MOVE", "🛑 ABORT definitivo")
+                    target = null   // 🔥 RESET anche qui
                     robot.stopMovement()
-                    onFinalAbort?.invoke()
+                    onAbort?.invoke()
                 }
             }
+
+            else -> {
+                Log.d("COACH_MOVE_STATUS", "ℹ Stato non gestito: $status")
+            }
+        }
+    }
+
+    private fun retryMove(location: String) {
+        val wait = when (retries) {
+            1 -> 3000L
+            2 -> 5000L
+            else -> 8000L
+        }
+
+        Log.e("COACH_MOVE", "↩ Retry #$retries dopo $wait ms → $location")
+
+        scope.launch {
+            robot.stopMovement()
+            delay(wait)
+            Log.e("COACH_MOVE", "🚗 Retry goTo($location)")
+            robot.goTo(location)
         }
     }
 }

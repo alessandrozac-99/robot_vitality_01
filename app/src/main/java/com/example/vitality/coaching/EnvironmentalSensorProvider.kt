@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.vitality.data.roomSensorIds
 import com.example.vitality.data.Spmv
 import com.example.vitality.viewmodel.TemperatureViewModel
+import kotlinx.coroutines.delay
 
 class EnvironmentalSensorProvider(
     private val vm: TemperatureViewModel
@@ -19,7 +20,11 @@ class EnvironmentalSensorProvider(
     }
 
     /**
-     * Acquisisce i dati della stanza associata al POI
+     * 🔥 Versione real-time:
+     * Ogni chiamata:
+     *   → attiva loadDataForZone()
+     *   → attende i valori aggiornati
+     *   → restituisce ComfortData sempre fresco
      */
     suspend fun getComfortForPoi(poiRaw: String): ComfortData? {
 
@@ -32,6 +37,22 @@ class EnvironmentalSensorProvider(
 
         val ids = roomSensorIds[roomKey]!!
 
+        // --------------------------------------------------------------------
+        // 1) Richiesta real-time dei valori tramite TemperatureViewModel
+        // --------------------------------------------------------------------
+        try {
+            Log.e("ENV", "🔄 Refresh dati → loadDataForZone($roomKey)")
+            vm.loadDataForZone(roomKey)
+        } catch (e: Exception) {
+            Log.e("ENV", "❌ Errore loadDataForZone($roomKey): ${e.message}")
+        }
+
+        // Attesa minima per permettere alla VM di aggiornare StateFlow
+        delay(900)
+
+        // --------------------------------------------------------------------
+        // 2) Lettura valori aggiornati
+        // --------------------------------------------------------------------
         val t   = vm.getPropertyValue(ids.deviceId, ids.temperatureId)
         val rh  = vm.getPropertyValue(ids.deviceId, ids.humidityId)
         val co2 = vm.getPropertyValue(ids.deviceId, ids.co2Id)
@@ -42,12 +63,16 @@ class EnvironmentalSensorProvider(
         val snd  = ids.soundlevelId?.let { vm.getPropertyValue(ids.deviceId, it) }
 
         if (t == null || rh == null) {
-            Log.e("ENV", "❌ Temperature o Humidity assenti per $roomKey")
+            Log.e("ENV", "❌ Temperature o Humidity assenti per $roomKey (t=$t, rh=$rh)")
             return null
         }
 
+        // Temperatura esterna
         val tOut = vm.externalTemp.value ?: 15.0
 
+        // --------------------------------------------------------------------
+        // 3) Calcolo comfort (PMV, CLO predetto, comfortClass…)
+        // --------------------------------------------------------------------
         val sp = Spmv.compute(t, rh, tOut)
 
         val result = ComfortData(
@@ -63,7 +88,7 @@ class EnvironmentalSensorProvider(
             sound = snd
         )
 
-        Log.e("ENV", "📡 Dati stanza $roomKey = $result")
+        Log.e("ENV", "📡 Dati real-time stanza $roomKey = $result")
 
         return result
     }
