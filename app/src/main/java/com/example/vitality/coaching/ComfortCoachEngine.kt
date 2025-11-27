@@ -1,6 +1,7 @@
 package com.example.vitality.coaching
 
 import com.example.vitality.data.ComfortClass
+import com.example.vitality.service.ComfortCoachFirebaseLogger
 import com.robotemi.sdk.Robot
 
 /**

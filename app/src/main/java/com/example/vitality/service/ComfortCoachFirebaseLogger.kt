@@ -1,9 +1,10 @@
-package com.example.vitality.coaching
+package com.example.vitality.service
 
 import com.google.firebase.database.FirebaseDatabase
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.vitality.coaching.ComfortData
 
 class ComfortCoachFirebaseLogger {
 
@@ -14,38 +15,40 @@ class ComfortCoachFirebaseLogger {
         data: ComfortData,
         message: String,
         occupancy: Boolean,
-        relevanceFeedback: Boolean? = null,
-        willActFeedback: Boolean? = null,
-        badAnswersCount: Int? = null,
-        noAnswerOnRelevance: Boolean? = null,
-        noAnswerOnWillAct: Boolean? = null
+        relevanceFeedback: Boolean?,
+        willActFeedback: Boolean?
     ) {
         val now = System.currentTimeMillis()
 
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(now))
-        val timeKey = SimpleDateFormat("HHmmss", Locale.US).format(Date(now))
+        val time = SimpleDateFormat("HHmmss", Locale.US).format(Date(now))
 
-        val ref = db.child("coaching_events").child(day).child(timeKey)
+        val ref = db.child("coaching_events").child(day).child(time)
 
-        val entry = mapOf(
-            "timestamp" to now,
-            "room" to room,
-            "comfortClass" to data.comfortClass?.name,
-            "pmv" to data.pmv,
-            "co2" to data.co2,
-            "lux" to data.lux,
-            "voc" to data.voc,
-            "iaq" to data.iaq,
-            "sound" to data.sound,
-            "message" to message,
-            "occupancy" to occupancy,
-            "relevanceFeedback" to relevanceFeedback,
-            "willActFeedback" to willActFeedback,
-            "badAnswersCount" to badAnswersCount,
-            "noAnswerOnRelevance" to noAnswerOnRelevance,
-            "noAnswerOnWillAct" to noAnswerOnWillAct
+        val payload = mapOf(
+            "metadata" to mapOf(
+                "timestamp" to now,
+                "room" to room,
+                "message" to message,
+                "occupancy" to occupancy
+            ),
+
+            "comfort" to mapOf(
+                "class" to data.comfortClass?.name,
+                "pmv" to data.pmv,
+                "co2" to data.co2,
+                "lux" to data.lux,
+                "voc" to data.voc,
+                "iaq" to data.iaq,
+                "sound" to data.sound
+            ),
+
+            "feedback" to mapOf(
+                "relevance" to relevanceFeedback,
+                "willAct" to willActFeedback
+            )
         )
 
-        ref.setValue(entry)
+        ref.setValue(payload)
     }
 }

@@ -5,42 +5,50 @@ package com.example.vitality.pid
  *  - Accensione: PMV <= -0.20
  *  - Spegnimento: PMV >= +0.15
  *
- * Include protezioni anti short-cycle:
+ * Anti short-cycle:
  *  - minimo tempo OFF prima di riaccendere
  *  - minimo tempo ON prima di spegnere
+ *
+ * Restituisce Pair(newState, changed)
  */
 class HeaterPIDController(
 
-    private val turnOnThreshold: Double = -0.20,   // ACCENSIONE
-    private val turnOffThreshold: Double = +0.15,  // SPEGNIMENTO
-
-    private val minOffDurationMs: Long = 180_000,  // 3 min OFF → protezione
-    private val minOnDurationMs: Long = 120_000    // 2 min ON → stabilità
+    private val turnOnThreshold: Double = -0.10,
+    private val turnOffThreshold: Double = +0.15,
+    private val minOffDurationMs: Long = 180_000, // 3 min OFF
+    private val minOnDurationMs: Long = 120_000    // 2 min ON
 ) {
 
-    private var lastSwitchTime: Long = 0L
+    private var lastSwitchTs: Long = 0L
     var isHeaterOn: Boolean = false
         private set
 
-    fun update(pmv: Double, now: Long = System.currentTimeMillis()): Boolean {
+    /**
+     * @return Pair(heaterState, changed)
+     */
+    fun update(pmv: Double, now: Long = System.currentTimeMillis()): Pair<Boolean, Boolean> {
 
-        val elapsed = now - lastSwitchTime
+        val elapsed = now - lastSwitchTs
+        var changed = false
 
-        // === LOGICA ACCENSIONE ===
+        // === ACCENSIONE ===
         if (!isHeaterOn) {
             if (pmv <= turnOnThreshold && elapsed >= minOffDurationMs) {
                 isHeaterOn = true
-                lastSwitchTime = now
-            }
-        }
-        // === LOGICA SPEGNIMENTO ===
-        else {
-            if (pmv >= turnOffThreshold && elapsed >= minOnDurationMs) {
-                isHeaterOn = false
-                lastSwitchTime = now
+                lastSwitchTs = now
+                changed = true
             }
         }
 
-        return isHeaterOn
+        // === SPEGNIMENTO ===
+        else {
+            if (pmv >= turnOffThreshold && elapsed >= minOnDurationMs) {
+                isHeaterOn = false
+                lastSwitchTs = now
+                changed = true
+            }
+        }
+
+        return Pair(isHeaterOn, changed)
     }
 }

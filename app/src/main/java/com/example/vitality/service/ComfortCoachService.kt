@@ -31,11 +31,11 @@ class ComfortCoachService : Service() {
     private val movement = ComfortCoachMovementController(robot)
     private val smartRepo = SmartPlugRepository()
 
-    /** intervallo tra cicli */
+    // intervalli
     private val intervalMs = TimeUnit.MINUTES.toMillis(15)
     private val cooldownMs = TimeUnit.MINUTES.toMillis(30)
-    private val lastInterventions = mutableMapOf<String, MutableMap<String, Long>>()
 
+    private val lastInterventions = mutableMapOf<String, MutableMap<String, Long>>()
     private var loopStarted = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -47,10 +47,12 @@ class ComfortCoachService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundSafe()
+
         if (!loopStarted) {
             loopStarted = true
             startMainLoop()
         }
+
         return START_STICKY
     }
 
@@ -59,9 +61,9 @@ class ComfortCoachService : Service() {
         super.onDestroy()
     }
 
-    // ------------------------------------------------------------
-    // FOREGROUND NOTIFICATION
-    // ------------------------------------------------------------
+    // --------------------------------------------------------------------
+    // NOTIFICA DI FOREGROUND
+    // --------------------------------------------------------------------
     private fun startForegroundSafe() {
         val channelId = "comfortcoach_channel"
 
@@ -76,32 +78,32 @@ class ComfortCoachService : Service() {
         }
 
         val notif: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Comfort Coach attivo")
-            .setContentText("Monitoraggio ambientale in corso…")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentTitle("Comfort Coach attivo")
+            .setContentText("Monitoraggio ambientale…")
             .build()
 
         startForeground(2024, notif)
     }
 
-    // ------------------------------------------------------------
-    // COOLDOWN
-    // ------------------------------------------------------------
+    // --------------------------------------------------------------------
+    // COOLDOWN CONTROL
+    // --------------------------------------------------------------------
     private fun inCooldown(room: String, type: String): Boolean {
-        val map = lastInterventions[room] ?: return false
-        val last = map[type] ?: return false
+        val last = lastInterventions[room]?.get(type) ?: return false
         val active = (System.currentTimeMillis() - last) < cooldownMs
         if (active) Log.w("COACH", "⏳ Cooldown attivo per $room ($type)")
         return active
     }
 
     private fun updateCooldown(room: String, type: String) {
-        lastInterventions.getOrPut(room) { mutableMapOf() }[type] = System.currentTimeMillis()
+        lastInterventions.getOrPut(room) { mutableMapOf() }[type] =
+            System.currentTimeMillis()
     }
 
-    // ------------------------------------------------------------
-    // MAIN LOOP
-    // ------------------------------------------------------------
+    // --------------------------------------------------------------------
+    // AVVIO DEL MAIN LOOP
+    // --------------------------------------------------------------------
     private fun startMainLoop() {
         scope.launch {
             delay(5000)
@@ -116,130 +118,158 @@ class ComfortCoachService : Service() {
         }
     }
 
-    // ------------------------------------------------------------
+    // --------------------------------------------------------------------
     // OCCUPANCY
-    // ------------------------------------------------------------
-    private suspend fun isRoomOccupied(roomNorm: String): Boolean {
-        val room = provider.mapNormalizedToRoom(roomNorm) ?: return false
+    // --------------------------------------------------------------------
+    private suspend fun isRoomOccupied(norm: String): Boolean {
+        val room = provider.mapNormalizedToRoom(norm) ?: return false
 
         val plugs = try {
             smartRepo.fetchPlugsForRoom(room)
         } catch (e: Exception) {
-            Log.e("COACH", "⚠ Occupancy fallita: ${e.message}")
+            Log.e("COACH", "⚠ Occupancy FAILED: ${e.message}")
             return false
         }
 
         if (plugs.isEmpty()) return false
 
         val total = plugs.sumOf { it.apower }
-        Log.e("COACH", "👤 OCCUPANCY [$room] → sum=$total")
-        return total > 5.0
+        Log.e("COACH", "👤 OCCUPANCY [$room] → $total W")
+        return total > 5
     }
 
-    // ------------------------------------------------------------
-    // MAIN COACHING FLOW
-    // ------------------------------------------------------------
+    // --------------------------------------------------------------------
+    // CICLO PRINCIPALE DI COACHING
+    // --------------------------------------------------------------------
     private suspend fun runCoachingCycle() {
 
         Log.e("COACH", "🔄 Avvio ciclo coaching…")
 
         val allPoi = robot.locations ?: emptyList()
         if (allPoi.isEmpty()) {
-            Log.e("COACH", "⚠ Nessun POI disponibile")
+            Log.e("COACH", "⚠ Nessun POI registrato")
             return
         }
 
-        data class Task(val poi: String, val roomNorm: String, val alertType: String)
+        data class Task(val poi: String, val norm: String, val type: String)
         val tasks = mutableListOf<Task>()
 
-        // 1) SCANSIONE STANZE
+        // ---------------- STANZA PER STANZA ----------------
         for (poi in allPoi) {
+
             if (poi.equals("home base", true)) continue
 
             val norm = Normalizer.normalize(poi)
             val comfort = provider.getComfortForPoi(norm) ?: continue
 
-            val decision = engine.evaluateComfort(poi, comfort)
-            if (!decision.shouldCoach) continue
+            val evaluation = engine.evaluateComfort(poi, comfort)
+            if (!evaluation.shouldCoach) continue
 
             if (!isRoomOccupied(norm)) continue
 
             val type = comfort.comfortClass?.name ?: "GENERIC"
             if (inCooldown(norm, type)) continue
 
+            Log.e("COACH", "✔ Task → $poi")
             tasks += Task(poi, norm, type)
         }
 
         if (tasks.isEmpty()) {
-            Log.e("COACH", "✔ Nessuna stanza richiede intervento")
+            Log.e("COACH", "✔ NESSUN INTERVENTO")
             return
         }
 
-        // 2) PER OGNI STANZA → nav → speak → dialogo vocale
-        for (t in tasks) {
+        // ---------------- ESECUZIONE INTERVENTI ----------------
+        for (task in tasks) {
+
+            Log.e("COACH_NAV", "🧭 Navigazione verso ${task.poi}")
 
             val arrived = CompletableDeferred<Boolean>()
 
             movement.navigate(
-                poi = t.poi,
+                poi = task.poi,
                 onArrival = { arrived.complete(true) },
                 onAbort = { arrived.complete(false) }
             )
 
+            val ok = withTimeoutOrNull(180_000) { arrived.await() } ?: false
 
-            val ok = withTimeoutOrNull(60_000) { arrived.await() } ?: false
             if (!ok) {
-                Log.e("COACH", "⚠ Fallito → skip ${t.poi}")
+                Log.e("COACH_NAV", "⚠ Navigation FAILED → skip ${task.poi}")
                 continue
             }
 
-            // Ricontrollo comfort post-navigazione
-            val afterData = provider.getComfortForPoi(t.roomNorm)
-            val recheck = afterData?.let { engine.evaluateComfort(t.poi, it) }
+            // ---------------- RECHECK DOPO ARRIVO ----------------
+            val data = provider.getComfortForPoi(task.norm)
+            val recheck = data?.let { engine.evaluateComfort(task.poi, it) }
 
-            if (afterData != null && recheck != null && recheck.shouldCoach) {
-
-                val baseMsg = buildString {
-                    append(recheck.reason)
-                    if (recheck.suggestions.isNotEmpty()) {
-                        append(". ")
-                        append(recheck.suggestions.joinToString(". "))
-                    }
-                }
-
-                // 1) Comunica il messaggio
-                speak(baseMsg)
-
-                // 2) Domanda 1: era utile?
-                val relevance = interaction.askYesNo(
-                    "Ti sembra un consiglio utile?"
-                )
-
-                // 3) Domanda 2: lo farai?
-                val willAct = interaction.askYesNo(
-                    "Hai intenzione di applicare questo consiglio a breve?"
-                )
-
-                // LOG FINALE
-                logger.logComfortEvent(
-                    room = t.poi,
-                    data = afterData,
-                    message = baseMsg,
-                    occupancy = true,
-                    relevanceFeedback = relevance,
-                    willActFeedback = willAct
-                )
-
-                updateCooldown(t.roomNorm, t.alertType)
+            if (recheck == null || !recheck.shouldCoach) {
+                Log.e("COACH", "ℹ Comfort migliorato → nessun messaggio")
+                continue
             }
+
+            // ------------------------------------------------------
+            // 1️⃣ PARLA CONSIGLIO COMPLETO SENZA TAGLI
+            // ------------------------------------------------------
+            val fullMessage = buildString {
+                append(recheck.reason)
+                if (recheck.suggestions.isNotEmpty()) {
+                    append(". ")
+                    append(recheck.suggestions.joinToString(". "))
+                }
+            }
+
+            speakBlocking(fullMessage)
+
+            // ------------------------------------------------------
+            // 2️⃣ DOMANDA 1
+            // ------------------------------------------------------
+            val relevance = interaction.askYesNo("Ti sembra un consiglio utile?")
+
+            // ------------------------------------------------------
+            // 3️⃣ DOMANDA 2
+            // ------------------------------------------------------
+            val willAct = interaction.askYesNo(
+                "Hai intenzione di applicare questo consiglio a breve?"
+            )
+
+            // ------------------------------------------------------
+            // 4️⃣ LOG FIREBASE
+            // ------------------------------------------------------
+            logger.logComfortEvent(
+                room = task.poi,
+                data = data,
+                message = fullMessage,
+                occupancy = true,
+                relevanceFeedback = relevance,
+                willActFeedback = willAct
+            )
+
+            updateCooldown(task.norm, task.type)
         }
 
-        // 3) RITORNO
-        Log.e("COACH", "🏠 RITORNO ALLA HOME BASE")
+        // ---------------- RITORNO ALLA BASE ----------------
+        Log.e("COACH", "🏠 RITORNO ALLA BASE")
         robot.goTo("home base")
     }
 
-    private fun speak(text: String) {
-        robot.speak(TtsRequest.create(text, false))
+    // --------------------------------------------------------------------
+    // TTS PRECISO SENZA TAGLIO – USA SOLO estimateTtsDuration()
+    // --------------------------------------------------------------------
+    private fun speakBlocking(text: String) {
+        Log.e("COACH_TTS", "🔊 Parlo: $text")
+
+        val req = TtsRequest.create(text, false)
+        robot.speak(req)
+
+        val wait = estimateTtsDuration(text)
+        Log.e("COACH_TTS", "⏳ Attesa stimata: ${wait}ms")
+
+        Thread.sleep(wait)
+    }
+
+    private fun estimateTtsDuration(text: String): Long {
+        val base = text.length * 85L   // Temi ≈ 12 char/sec
+        return base + 700              // margine sicurezza
     }
 }

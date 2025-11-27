@@ -12,14 +12,15 @@ class ComfortCoachMovementController(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private var target: String? = null
-    private var retries = 0
-    private val maxRetries = 3
-
     private var onArrival: (() -> Unit)? = null
     private var onAbort: (() -> Unit)? = null
 
+    private var retries = 0
+    private val maxRetries = 2
+
+    private var lastProgressTime = System.currentTimeMillis()
+
     init {
-        Log.e("COACH_MOVE", "📡 MovementController inizializzato")
         robot.addOnGoToLocationStatusChangedListener(this)
     }
 
@@ -28,19 +29,20 @@ class ComfortCoachMovementController(
         onArrival: () -> Unit,
         onAbort: () -> Unit
     ) {
-        Log.e("COACH_MOVE", "➡ navigate() richiesto → $poi")
+        Log.e("MOVE", "➡ Navigazione verso $poi")
 
         target = poi
         retries = 0
+        lastProgressTime = System.currentTimeMillis()
+
         this.onArrival = onArrival
         this.onAbort = onAbort
 
-        Log.e("COACH_MOVE", "⛔ Movimento precedente fermato")
         robot.stopMovement()
 
         scope.launch {
             delay(300)
-            Log.e("COACH_MOVE", "🚗 goTo($poi)")
+            Log.e("MOVE", "🚗 goTo($poi)")
             robot.goTo(poi)
         }
     }
@@ -51,64 +53,100 @@ class ComfortCoachMovementController(
         descriptionId: Int,
         description: String
     ) {
-
-        Log.e(
-            "COACH_MOVE_STATUS",
-            "📍 STATUS → location=$location | status=$status | desc=$description"
+        Log.e("MOVE_STATUS",
+            "📍 loc=$location | status=$status | desc=$description"
         )
 
-        // Se non è il target attuale → ignoralo
-        if (target == null || location != target) {
-            Log.w(
-                "COACH_MOVE_STATUS",
-                "⚠ Evento ignorato → target attuale=$target"
-            )
-            return
-        }
+        val tgt = target ?: return
+        if (location != tgt) return
 
         when (status) {
 
+            OnGoToLocationStatusChangedListener.GOING -> {
+                lastProgressTime = System.currentTimeMillis()
+            }
+
             OnGoToLocationStatusChangedListener.COMPLETE -> {
-                Log.e("COACH_MOVE", "🏁 ARRIVATO a $location (retries=$retries)")
-                target = null   // 🔥 RESET FONDAMENTALE
-                onArrival?.invoke()
+                Log.e("MOVE", "✅ Arrivato a $location")
+                finish(success = true)
             }
 
             OnGoToLocationStatusChangedListener.ABORT -> {
-
-                Log.e("COACH_MOVE", "❌ ABORT a $location (retry=$retries/$maxRetries)")
-
-                if (retries < maxRetries) {
-                    retries++
-                    retryMove(location)
-                } else {
-                    Log.e("COACH_MOVE", "🛑 ABORT definitivo")
-                    target = null   // 🔥 RESET anche qui
-                    robot.stopMovement()
-                    onAbort?.invoke()
-                }
-            }
-
-            else -> {
-                Log.d("COACH_MOVE_STATUS", "ℹ Stato non gestito: $status")
+                handleAbort(location, description)
             }
         }
     }
 
-    private fun retryMove(location: String) {
-        val wait = when (retries) {
-            1 -> 3000L
-            2 -> 5000L
-            else -> 8000L
+    // -------------------------------------------------------------------
+    // INTELLIGENT ABORT HANDLER
+    // -------------------------------------------------------------------
+    private fun handleAbort(location: String, description: String) {
+
+        Log.e("MOVE", "❌ ABORT → $description")
+
+        val now = System.currentTimeMillis()
+        val stuckTooLong = now - lastProgressTime > 6000 // 6 sec senza progresso
+
+        val doorLikelyClosed =
+            description.contains("path", true) ||
+                    description.contains("blocked", true)
+
+        val physicalObstacle =
+            description.contains("obstacle", true)
+
+        // --- FALLIMENTO IMMEDIATO (porta chiusa, path impossibile)
+        if (doorLikelyClosed) {
+            Log.e("MOVE", "🚪 Porta chiusa o percorso impossibile → ABORT HARD")
+            finish(false)
+            return
         }
 
-        Log.e("COACH_MOVE", "↩ Retry #$retries dopo $wait ms → $location")
+        // --- FALLIMENTO SE BLOCCATO TROPPO A LUNGO
+        if (stuckTooLong) {
+            Log.e("MOVE", "⏱ Robot bloccato da troppo → ABORT HARD")
+            finish(false)
+            return
+        }
+
+        // --- OSTACOLO TEMPORANEO → RETRY FINO A 2 VOLTE
+        if (physicalObstacle && retries < maxRetries) {
+            retry(location)
+            return
+        }
+
+        // --- TROPPI TENTATIVI → HARD ABORT
+        if (retries >= maxRetries) {
+            Log.e("MOVE", "🛑 Troppi tentativi → ABORT HARD")
+            finish(false)
+            return
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // RETRY
+    // -------------------------------------------------------------------
+    private fun retry(location: String) {
+        retries++
+        Log.e("MOVE", "↩ Retry $retries/$maxRetries verso $location")
 
         scope.launch {
             robot.stopMovement()
-            delay(wait)
-            Log.e("COACH_MOVE", "🚗 Retry goTo($location)")
+            delay(1200)
+            lastProgressTime = System.currentTimeMillis()
             robot.goTo(location)
         }
+    }
+
+    // -------------------------------------------------------------------
+    // FINE NAVIGAZIONE
+    // -------------------------------------------------------------------
+    private fun finish(success: Boolean) {
+        val cb = if (success) onArrival else onAbort
+
+        target = null
+        onArrival = null
+        onAbort = null
+
+        cb?.invoke()
     }
 }

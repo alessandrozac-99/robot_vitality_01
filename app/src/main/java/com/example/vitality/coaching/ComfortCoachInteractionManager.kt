@@ -14,54 +14,59 @@ class ComfortCoachInteractionManager(
     private var pendingAnswer: CompletableDeferred<String?>? = null
 
     init {
-        // Registrazione listener ASR del Temi
         robot.addAsrListener(this)
     }
 
-    /**
-     * Domanda sì/no usando askQuestion + ascolto ASR diretto (senza assistant).
-     */
     suspend fun askYesNo(question: String): Boolean? {
 
         val responseDeferred = CompletableDeferred<String?>()
         pendingAnswer = responseDeferred
 
-        // 1) TTS della domanda
         val tts = TtsRequest.create(question, true)
 
-        // 2) STT request — VERSIONE CORRETTA PER IL TUO SDK
         val stt = SttRequest(
             languages = listOf(SttLanguage.IT_IT),
-            timeout = 10,  // secondi
+            timeout = 10,
             multipleConversation = false
         )
 
-        // 3) Temi parla → poi ascolta
         robot.askQuestion(tts, stt)
 
-        // 4) Attesa della risposta ASR
-        val answer = responseDeferred.await()
-        Log.e("COACH-ASR", "🎤 ASR response: $answer")
-
-        return when {
-            answer == null -> null
-            answer.contains("sì", true) -> true
-            answer.contains("si", true) -> true
-            answer.contains("ok", true) -> true
-            answer.contains("no", true) -> false
-            else -> null
+        val answer = try {
+            responseDeferred.await()
+        } catch (e: Exception) {
+            null
         }
+
+        if (answer == null) {
+            Log.e("COACH-ASR", "⏳ Nessuna risposta — chiudo conversation()")
+            robot.finishConversation()
+            return null
+        }
+
+        return normalizeYesNo(answer)
     }
 
-    /**
-     * Callback ASR del Temi.
-     */
-    override fun onAsrResult(asrResult: String, language: SttLanguage) {
-        Log.e("COACH-ASR", "📥 Received ASR: $asrResult (lang=$language)")
+    override fun onAsrResult(asrResult: String, sttLanguage: SttLanguage) {
+        Log.e("COACH-ASR", "📥 Received ASR: $asrResult (lang=$sttLanguage)")
         pendingAnswer?.complete(asrResult)
         pendingAnswer = null
 
-        // IMPORTANTISSIMO: termina la sessione e NON avvia l’assistente.
         robot.finishConversation()
+    }
+
+
+    private fun normalizeYesNo(txt: String?): Boolean? {
+        if (txt == null) return null
+        val t = txt.lowercase()
+
+        val yes = listOf("sì", "si", "ok", "va bene", "certo", "ovvio", "chiaro")
+        val no = listOf("no", "non credo", "nope")
+
+        return when {
+            yes.any { t.contains(it) } -> true
+            no.any  { t.contains(it) } -> false
+            else -> null
+        }
     }
 }
