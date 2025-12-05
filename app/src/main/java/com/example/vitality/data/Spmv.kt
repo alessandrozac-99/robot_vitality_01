@@ -56,28 +56,28 @@ object Spmv {
 
         val coeffs = when {
             cloPred >= 1.0 -> Coeffs(
-                a = 0.0761, b = 0.2769, c = -1.7138,
+                a = 0.1390, b = 2.5912, c = 5.432,
                 sa = 0.1077, sb = 0.0329, sc = -2.4282,
                 ba = 0.1478, bb = -0.1371, bc = 2.5239
             )
             cloPred >= 0.8 -> Coeffs( // 0.8 ≤ cloPred < 1.0
-                a = 0.1253, b = 0.1952, c = -2.8667,
+                a = 0.0983, b = 0.2883, c = 2.1689,
                 sa = 0.1119, sb = 0.0406, sc = -2.5231,
                 ba = 0.1383, bb = 0.0269, bc = 3.0190
             )
             cloPred > 0.5 -> Coeffs( // 0.5 < cloPred < 0.8
-                a = 0.1391, b = 0.1207, c = -3.3579,
+                a = 0.1185, b = 0.2192, c = 2.795,
                 sa = 0.1121, sb = 0.0413, sc = -2.5264,
                 ba = 0.1383, bb = 0.0269, bc = 3.0190
             )
             else -> Coeffs( // cloPred ≤ 0.5
-                a = 0.2851, b = 0.5619, c = -6.2674,
+                a = 0.1152, b = 0.3268, c = 3.8501,
                 sa = 0.1121, sb = 0.0421, sc = -2.5284,
                 ba = 0.2803, bb = 0.1717, bc = 7.1383
             )
         }
 
-        val pmv  = round2(coeffs.a  * T + coeffs.b  * pv + coeffs.c)
+        val pmv  = round2(coeffs.a  * T + coeffs.b  * pv - coeffs.c)
         val pmv2 = round2(coeffs.sa * T + coeffs.sb * pv + coeffs.sc)
         val pmv3 = round2(coeffs.ba * T + coeffs.bb * pv - coeffs.bc)
 
@@ -87,10 +87,10 @@ object Spmv {
     }
 
     private fun classify(pmv: Double): ComfortClass = when {
-        pmv < -1.0  -> ComfortClass.COLD
-        pmv < -0.3  -> ComfortClass.COOL
-        pmv <= 0.3  -> ComfortClass.NEUTRAL
-        pmv <= 1.0  -> ComfortClass.WARM
+        pmv < -1  -> ComfortClass.COLD
+        pmv < -0.5  -> ComfortClass.COOL
+        pmv <= 0.5  -> ComfortClass.NEUTRAL
+        pmv <= 1  -> ComfortClass.WARM
         else        -> ComfortClass.HOT
     }
 

@@ -103,7 +103,7 @@ class ComfortCoachEngine(
                     severity = maxOf(severity, 1)
                 }
 
-                lx > 800 -> {
+                lx > 1500-> {
                     alerts += "Illuminazione troppo elevata"
                     suggestions += "Riduci i riflessi abbassando gli oscuranti."
                     severity = maxOf(severity, 1)

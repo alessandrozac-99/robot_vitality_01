@@ -27,6 +27,7 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
     private val overlayMutex = Mutex()
     private var lastHeatmapBuild = 0L
+    private var heatmapJob: Job? = null   // <— NEW
 
     private val _mapBitmap = MutableStateFlow<ImageBitmap?>(null)
     val mapBitmap: StateFlow<ImageBitmap?> = _mapBitmap
@@ -37,7 +38,6 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
     private var occData: IntArray? = null
 
     private var selectedZoneName: String? = null
-
     fun setSelectedZone(name: String) {
         Log.e("MAP-SEL", "Zona selezionata manualmente: $name")
         selectedZoneName = name
@@ -87,6 +87,7 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         globalPollJob?.cancel()
+        heatmapJob?.cancel()
         super.onCleared()
     }
 
@@ -231,20 +232,28 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
                 rebuildGlobalTintOverlay()
 
                 Log.e("MAP-OVERLAY", "Debounce heatmap…")
-                debounceHeatmapBuild()
+                debounceHeatmapBuild()   // <— NEW VERSION
             }
         }
     }
 
+    // ============================================================================
+    // HEATMAP DEBOUNCE MIGLIORATO
+    // ============================================================================
     private suspend fun debounceHeatmapBuild() {
-        val now = System.currentTimeMillis()
-        if (now - lastHeatmapBuild < 4000) {
-            Log.w("MAP-HEAT", "skip heatmap (troppo vicino al precedente)")
-            return
-        }
 
-        lastHeatmapBuild = now
-        buildHeatmapOverlay()
+        heatmapJob?.cancel()
+
+        heatmapJob = viewModelScope.launch(Dispatchers.Default) {
+            delay(1000) // evita flood di aggiornamenti
+            try {
+                Log.e("MAP-HEAT", "🟦 Debounce expired → ricostruisco heatmap…")
+                buildHeatmapOverlay()
+                lastHeatmapBuild = System.currentTimeMillis()
+            } catch (e: Exception) {
+                Log.e("MAP-HEAT", "❌ Errore heatmap: ${e.message}")
+            }
+        }
     }
 
     // ============================================================================
@@ -273,7 +282,6 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
                         val zname = zone.name
                         Log.e("MAP-POLL", "→ Zona: $zname")
-
 
                         val match = roomSensorIds.keys.firstOrNull {
                             normalizeName(it) == normalizeName(zname)
@@ -319,14 +327,8 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
         Log.e("MAP-TINT", "RICOSTRUZIONE TINT OVERLAY…")
 
-        val info = _mapInfo.value ?: run {
-            Log.e("MAP-TINT", "mapInfo null → abort")
-            return@withContext
-        }
-        val occ = occData ?: run {
-            Log.e("MAP-TINT", "occData null → abort")
-            return@withContext
-        }
+        val info = _mapInfo.value ?: return@withContext
+        val occ = occData ?: return@withContext
         val zones = _zones.value
 
         val width = info.width
@@ -336,15 +338,8 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
         for (zone in zones) {
 
-            val spmv = spmvCache[zone.name]
-            if (spmv == null) {
-                Log.w("MAP-TINT", "spmv null per zona ${zone.name} → skip")
-                continue
-            }
-
+            val spmv = spmvCache[zone.name] ?: continue
             val argb = spmvToArgb(spmv, spmvAlpha)
-
-            Log.e("MAP-TINT", "Coloro zona ${zone.name} con spmv=$spmv")
 
             val minX = max(0f, zone.vertices.minOf { it.x }).toInt()
             val maxX = min(width - 1f, zone.vertices.maxOf { it.x }).toInt()
@@ -366,8 +361,8 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
         Log.e("MAP-TINT", "Tint overlay completato.")
 
-        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        bmp.setPixels(overlay, 0, width, 0, 0, width, height)
+        val bmp = Bitmap.createBitmap(info.width, info.height, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(overlay, 0, info.width, 0, 0, info.width, info.height)
         _tintOverlay.value = bmp.asImageBitmap()
     }
 
@@ -389,12 +384,7 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
         for (zone in zonesList) {
 
-            val spmv = spmvCache[zone.name]
-            if (spmv == null) {
-                Log.w("MAP-HEAT", "spmv null per zona ${zone.name} → skip heatmap")
-                continue
-            }
-
+            val spmv = spmvCache[zone.name] ?: continue
             val color = spmvToColor(spmv)
 
             Log.e("MAP-HEAT", "Zona ${zone.name} → colore heatmap applicato")
@@ -418,8 +408,8 @@ class TemiMapViewModel(application: Application) : AndroidViewModel(application)
 
         Log.e("MAP-HEAT", "Heatmap overlay completato.")
 
-        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        bmp.setPixels(pixels, 0, width, 0, 0, width, height)
+        val bmp = Bitmap.createBitmap(info.width, info.height, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(pixels, 0, info.width, 0, 0, info.width, info.height)
         _heatmapOverlay.value = bmp.asImageBitmap()
     }
 
